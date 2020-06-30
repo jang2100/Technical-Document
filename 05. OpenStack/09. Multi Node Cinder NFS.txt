@@ -1,0 +1,120 @@
+------------+---------------------------+---------------------------+-----------------
+            |                           |                           |
+       ens32|192.168.1.100         ens32|192.168.1.200         ens32|192.168.1.150
++-----------+-----------+   +-----------+-----------+   +-----------+-----------+
+|    [ Control Node ]   |   |    [ Storage Node ]   |   |    [ Compute Node ]   |
+|                       |   |    [ Network Node ]   |   |                       |
+|  MariaDB    RabbitMQ  |   | DHCP Agent NFS_Client |   |        Libvirt        |
+|  Memcached  httpd     |   |      Open vSwitch     |   |     Nova Compute      |
+|  Keystone   Glance    |   |        L2 Agent       |   |      Open vSwitch     |
+|  Nova API  NFS_Server |   |        L3 Agent       |   |        L2 Agent       |
+|  Neutron Server       |   |     Metadata Agent    |   |       NFS_Client      |
+|  Metadata Agent       |   |      iSCSI-target     |   |                       |
+|  Cinder API           |   |     Cinder Volume     |   |                       |
++-----------------------+   +-----------------------+   +-----------------------+
+
+[ ### Controller Node 설정 ### ]
+
+- Controller Node에서 10GB HDD 새로 추가 후 작업을 진행
+
+# 디스크 포맷 및 마운트
+
+[root@Controller ~(keystone)]# mkfs.xfs /dev/sdb
+[root@Controller ~(keystone)]# mkdir /nfs_dir
+[root@Controller ~(keystone)]# mount /dev/sdb /nfs_dir
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/fstab
+/dev/sdb        /nfs_dir        xfs     noatime,nodiratime,nobarrier      0 0
+
+
+# 마운트 정보 확인
+[root@Controller ~(keystone)]# df -h | grep nfs_dir
+/dev/sdb                  10G   33M   10G   1% /nfs_dir
+
+# NFS Server 구성을 위한 패키지 설치
+[root@Controller ~(keystone)]# yum -y install nfs-utils
+
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/idmapd.conf
+5 Domain = kgitbank.com
+
+[root@Controller ~(keystone)]# vi /etc/exports
+/nfs_dir 192.168.1.0/24(rw,no_root_squash)
+
+
+# NFS 및 rpcbind 방화벽 설정 및 서비스 시작, 자동시작 등록
+[root@Controller ~(keystone)]# firewall-cmd --permanent --add-service=rpc-bind
+[root@Controller ~(keystone)]# firewall-cmd --permanent --add-service=nfs
+[root@Controller ~(keystone)]# firewall-cmd --reload
+
+[root@Controller ~(keystone)]# systemctl start nfs-server rpcbind
+[root@Controller ~(keystone)]# systemctl enable nfs-server rpcbind
+
+
+[ ### Storage Node 설정 ### ]
+
+# 패키시 설치
+[root@Network ~]# yum -y install nfs-utils
+
+# 설정 파일 수정
+[root@Network ~]# vi /etc/idmapd.conf
+5 Domain = kgitbank.com
+
+# NFS 및 rpcbind 방화벽 설정 및 서비스 시작, 자동시작 등록
+[root@Network ~]# firewall-cmd --permanent --add-service=rpc-bind
+[root@Network ~]# firewall-cmd --reload
+[root@Network ~]# systemctl start rpcbind
+[root@Network ~]# systemctl enable rpcbind
+
+# 설정 파일 수정
+[root@Network ~]# vi /etc/cinder/cinder.conf
+
+enabled_backends = nfs
+
+[nfs]
+volume_driver = cinder.volume.drivers.nfs.NfsDriver
+nfs_shares_config = /etc/cinder/nfs.conf
+nfs_mount_point_base = $state_path/mnt
+
+
+[root@Network ~]# vi /etc/cinder/nfs.conf
+Controller:/nfs_dir
+
+
+# Cinder Volume 서비스 재시작
+[root@Network ~]# systemctl restart openstack-cinder-volume
+
+# 새로 정의 된 파일 및 디렉터리의 허가권 및 소유권 변경
+[root@Network ~]# chmod 640 /etc/cinder/nfs.conf
+[root@Network ~]# chown .cinder /etc/cinder/nfs.conf
+[root@Network ~]# chown -R cinder. /var/lib/cinder/mnt
+
+
+
+
+[ ### Compute Node 설정 ### ]
+
+# 패키지 설치
+[root@Compute ~]# yum -y install nfs-utils
+
+# 설정 파일 수정
+[root@Compute ~]# vi /etc/idmapd.conf
+5 Domain = kgitbank.com
+
+# NFS 및 rpcbind 방화벽 설정 및 서비스 시작, 자동시작 등록
+[root@Compute ~]# firewall-cmd --permanent --add-service=rpc-bind
+[root@Compute ~]# firewall-cmd --reload
+[root@Compute ~]# systemctl start rpcbind
+[root@Compute ~]# systemctl enable rpcbind
+
+
+# 설정 파일 수정
+[root@Compute ~]# vi /etc/nova/nova.conf
+[cinder]
+os_region_name = RegionOne
+
+# Nova Compute 서비스 재시작
+[root@Compute ~]# systemctl restart openstack-nova-compute
+

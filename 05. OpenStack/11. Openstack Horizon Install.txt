@@ -1,0 +1,70 @@
++-----------+-----------+
+            |                
+       ens32|192.168.1.100   
++-----------+-----------+    
+|    [ Control Node ]   |
+|  [ Swift Proxy Node ] |  
+|                       |  
+| MariaDB    RabbitMQ   |
+| Memcached  httpd      |    
+| Keystone  Swift Proxy |
++-----------+-----------+ 
+            |                 
+            +--------------------------+
+       ens32|192.168.1.150        ens32|192.168.1.200    
++-----------+--------------+  +-----------+-----------+
+|    [ Compute Node ]      |  |    [ Network Node ]   |
+|   [ Storage Node#1 ]     |  |   [ Storage Node#2 ]  |
+|        Libvirt           |  | DHCP Agent NFS_Client |              
+|     Nova Compute         |  |	    Open vSwitch      |
+|     Open vSwitch	   |  |	      L2 Agent	      |
+|        L2 Agent	   |  |	      L3 Agent	      |
+|      NFS_Client	   |  |	    Metadata Agent    |
+|      Swift-Account       |  |	     iSCSI-target     |
+|      Swift-Container	   |  |	    Cinder Volume     |
+|      Swift-Object        |  |     Swift-Account     |
++--------------------------+  |     Swift-Container   |  
+			      |     Swift-Object      |
+			      +-----------------------+
+							  
+							  
+							
+# Horizon 패키지 설치
+[root@controller ~(keystone)]# yum -y install openstack-dashboard
+
+# 설정 파일 수정
+[root@controller ~(keystone)]# vi /etc/openstack-dashboard/local_settings
+39 ALLOWED_HOSTS = ['*', 'localhost']
+40 WEBROOT = '/dashboard/'
+
+41 OPENSTACK_API_VERSIONS = {
+42     "identity": 3,
+43     "image": 2,
+44     "volume": 3,
+45     "compute": 2,
+46 }
+
+113 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+114 CACHES = {
+115     'default': {
+116         'BACKEND': 'django.core.cache.backends.memcached.MemcachedCache',
+117         'LOCATION': '192.168.1.100:11211',
+118     },
+119 }
+
+
+133 OPENSTACK_HOST = "192.168.1.100"
+134 OPENSTACK_KEYSTONE_URL = "http://%s:5000/v3" % OPENSTACK_HOST
+135 OPENSTACK_KEYSTONE_DEFAULT_DOMAIN = "default"
+136 OPENSTACK_KEYSTONE_DEFAULT_ROLE = "admin"
+137 OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT = True
+
+165 TIME_ZONE = "Asia/Seoul"
+
+[root@controller ~(keystone)]# vi /etc/httpd/conf.d/openstack-dashboard.conf
+4 WSGIApplicationGroup %{GLOBAL}
+
+# 서비스 재시작
+[root@controller ~(keystone)]# systemctl restart httpd memcached
+
+

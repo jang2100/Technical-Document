@@ -1,0 +1,137 @@
+[ Web&DNS , MainDB , BackupDB 설치 ]
+- CentOS-7-x86_64-Everything-1611 - 서버(GUI 환경 설치)
+
+- Web&DNS Node 
+	: HDD(100GB), RAM(2GB), VCPU(1)
+	: HostName: Web&DNS
+	: IP: 100.100.100.200/24
+
+- MainDB Node
+	: HDD(100GB), RAM(2GB), VCPU(1)
+	: HostName: MainDB
+	: IP 192.168.1.150/24
+
+- BackupDB Node 
+	: HDD(100GB), RAM(1GB), VCPU(1)
+	: HostName: BackupDB
+	: IP 192.168.1.160/24
+
+- DHCP Node
+	: HDD(100GB), RAM(1GB), VCPU(1)
+	: HostName: DHCP
+	: IP 192.168.1.200/24
+
+
+
+
+
+####### 채널 본딩 구성
+
+[root@HOSTNAME ~]# vi /etc/sysconfig/network-scripts/ifcfg-ens32
+
+UUID=44158edd-60ea-38c1-8542-a20948005fea
+TYPE=Ethernet
+USERCTL=no
+NM_CONTROLLED=no
+MASTER=bond0
+SLAVE=yes
+BOOTPROTO=none
+DEFROUTE=yes
+NAME=ens32
+DEVICE=ens32
+ONBOOT=yes
+
+
+[root@HOSTNAME ~]# vi /etc/sysconfig/network-scripts/ifcfg-ens33
+
+UUID=c78e84bf-de8f-4e90-8bed-78f762d41f40
+TYPE=Ethernet
+USERCTL=no
+NM_CONTROLLED=no
+MASTER=bond0
+SLAVE=yes
+BOOTPROTO=none
+DEFROUTE=yes
+NAME=ens33
+DEVICE=ens33
+ONBOOT=yes
+
+
+[root@HOSTNAME ~]# vi /etc/sysconfig/network-scripts/ifcfg-bond0
+
+EVICE=bond0
+ONBOOT=yes
+USERCTL=no
+NM_CONTROLLED=no
+BOOTPROTO=none
+IPADDR=100.100.100.200(Web&DNS) or 192.168.1.100(DHCP) or 192.168.1.150(MainDB) or 192.168.1.160(BackupDB)
+NETMASK=255.255.255.0
+GATEWAY=100.100.100.254(Web&DNS) or 192.168.1.254(DHCP&DB)
+DNS1=100.100.100.200
+BROADCAST=100.100.100.255(Web&DNS) or 192.168.1.255(DHCP&DB)
+
+
+[root@HOSTNAME ~]# /etc/sysconfig/network
+
+# Created bu anaconda
+GATEWAYDEV = bond0
+
+[root@HOSTNAME ~]# /etc/modprobe.d/bonding.conf
+
+alias bond0 bonding
+# Channel Mode를 적어주는게 맞지만 오류가 종종 발생하기에 별칭 정도만 지정
+
+
+[root@HOSTNAME ~]# modprobe bonding
+[root@HOSTNAME ~]# systemctl restart network
+
+#본딩 된 NIC 정보 확인
+[root@HOSTNAME ~]# cat /proc/net/bonding/bond0
+
+Ethernet Channel Bonding Driver: v3.7.1 (April 27, 2011)
+
+
+Bonding mode: load balancing (round-robin) 
+Mll Status: up 
+Mll Polling Interval (ms): 0
+Up Delay (ms): 0
+Down Delay (ms): 0 
+
+Slave Interface: ens32 
+Mll Status: up 
+Speed : 1000 Mbps 
+Duplex: full 
+Link Failure Count: 0
+Permanent addr: 00:0c:29:a4:5f:42 
+Slave queue ID: 0
+
+Slave Interface: ens33 
+Mll Status: up 
+Speed : 1000 Mbps 
+Duplex: full 
+Link Failure Count: 0
+Permanent addr: 00:0c:29:a4:5f:4c 
+Slave queue ID: 0
+
+
+# 본딩 옵션 추가
+[root@HOSTNAME ~]# vi /etc/sysconfig/network-scripts/ifcfg-bond0
+~~~~~~~~
+BONDING_OPTS="mode=4 miimon=100"
+
+
+# 본딩 정보 확인
+[root@HOSTNAME ~]# watch -d -n 1 "cat /proc/net/bonding/bond0"
+
+Ethernet Channel Bonding Driver: v3.7.1 (April 27, 2011)
+
+Bonding Mode: IEEE 802. 3ad Dynamic link Aggregation
+Transmit Hash Policy: layer2 (0)
+MII Status: up
+MII Polling Interval (ms): 100
+Up Delay (ms): 0
+Down Delay (ms): 0
+
+802.3ad info
+LACP rate: slow
+…생략

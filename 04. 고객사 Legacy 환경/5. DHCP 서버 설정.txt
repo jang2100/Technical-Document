@@ -1,0 +1,45 @@
+
+#DHCP 패키지 설치
+
+[root@DHCP ~]# yum -y install dhcp
+
+#설정 파일 수정
+[root@DHCP ~]# vi /etc/dhcp/dhcpd.conf
+
+
+# DHCP Server Configuration file.
+#   see /usr/share/doc/dhcp*/dhcpd.conf.example
+#   see dhcpd.conf(5) man page
+#
+subnet 192.168.1.0 netmask 255.255.255.0 {
+        range dynamic-bootp 192.168.1.10 192.168.1.50;
+        option subnet-mask 255.255.255.0;
+        option routers 192.168.1.254;
+        option domain-name-servers 100.100.100.200;
+        default-lease-time 345600;
+        max-lease-time 691200;
+}
+
+subnet 10.1.1.0 netmask 255.255.255.0 {
+        range dynamic-bootp 10.1.1.10 10.1.1.250;
+        option subnet-mask 255.255.255.0;
+        option routers 10.1.1.254;
+        option domain-name-servers 100.100.100.200;
+        default-lease-time 345600;
+        max-lease-time 691200;
+}
+
+subnet 10.1.2.0 netmask 255.255.255.0 {
+        range dynamic-bootp 10.1.2.10 10.1.2.250;
+        option subnet-mask 255.255.255.0;
+        option routers 10.1.2.254;
+        option domain-name-servers 100.100.100.200;
+        default-lease-time 345600;
+        max-lease-time 691200;
+}
+
+[root@DHCP ~]# systemctl start dhcpd
+[root@DHCP ~]# systemctl enable dhcpd
+[root@DHCP ~]# firewall-cmd --permanent --add-service=dhcp
+[root@DHCP ~]# firewall-cmd --reload
+

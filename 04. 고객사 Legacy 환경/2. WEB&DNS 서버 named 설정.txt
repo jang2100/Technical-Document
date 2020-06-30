@@ -1,0 +1,55 @@
+[root@Web&DNS ~]# yum -y install bind-*
+
+#named.conf 설정 파일 수정
+[root@Web&DNS ~]# vi /etc/named.conf
+
+13         listen-on port 53 { any; };
+21         allow-query     { any; };
+33         recursion no;
+
+#named.rfc1912.zones 설정 파일 수정
+
+43 zone "shopping.com" IN {
+44         type master;
+45         file "shopping.zone";
+46 # 아래는 DNS 이중화 설정시 사용
+47 #       allow-update { 192.168.1.x; };
+48 #       allow-transfer{ 192.168.1.x; };
+49 #       also-notify { 192.168.1.x; };
+50 };
+
+
+#zone 파일 생성
+
+[root@Web&DNS ~]# cd /var/named/
+[root@Web&DNS /var/named]# cp -p named.localhost shopping.zone
+
+[root@Web&DNS /var/named]# vi shopping.zone
+
+$TTL 1D
+@       IN SOA  ns1.shopping.com.       root(
+                                        0       ; serial
+                                        1D      ; refresh
+                                        1H      ; retry
+                                        1W      ; expire
+                                        3H )    ; minimum
+        IN      NS      ns1.shopping.com.
+ns1     IN      A       100.100.100.200
+www     IN      A       100.100.100.200
+
+
+
+#resolv.conf 파일 수정
+[root@Web&DNS /var/named]# vi /etc/resolv.conf
+
+nameserver 100.100.100.200
+nameserver 168.126.63.1
+
+
+#방화벽 등록
+
+[root@Web&DNS /var/named]# firewall-cmd --permanent --add-service=dns
+[root@Web&DNS /var/named]# firewall-cmd --reload
+
+[root@Web&DNS /var/named]# systemctl start named
+[root@Web&DNS /var/named]# systemctl enable named

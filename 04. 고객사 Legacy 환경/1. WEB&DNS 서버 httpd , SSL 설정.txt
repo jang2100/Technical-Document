@@ -1,0 +1,104 @@
+[root@Web&DNS ~]# yum -y install php* http* mod_ssl* php-mysqli
+
+#httpd 설정 파일 수정
+[root@Web&DNS ~]# vi /etc/httpd/conf/httpd.conf
+
+95      ServerName www.shopping.com:80
+103     LimitRequestBody 5000000
+120     DocumentRoot "/apache/www"
+125 #<Directory "/var/www">
+126 #    AllowOverride None
+127 #    # Allow open access:
+128 #    Require all granted
+129 #</Directory>
+132 <Directory "/apache/www">
+133     AllowOverride None
+134     Require all granted
+135 </Directory>
+333 <VirtualHost *:80>
+334    ServerName www.shopping.com
+335    Redirect "/" "https://www.shopping.com/"
+336 </VirtualHost>
+
+
+#DocumentRoot 디렉터리 생성
+[root@Web&DNS ~]# mkdir -p /apache/www
+
+
+#SSL Key 생성
+[root@Web&DNS ~]# openssl genrsa -out /etc/pki/tls/private/shopping.key 2048
+
+
+#SSL Csr 생성
+[root@Web&DNS ~]# openssl req -new -key /etc/pki/tls/private/shopping.key -out /etc/pki/tls/private/shopping.csr
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+Country Name (2 letter code) [XX]:KR
+State or Province Name (full name) []:Seoul
+Locality Name (eg, city) [Default City]:Dongjak
+Organization Name (eg, company) [Default Company Ltd]:Shopping
+Organizational Unit Name (eg, section) []:Test
+Common Name (eg, your name or your server's hostname) []:www.shopping.com
+Email Address []:root@localhost
+
+Please enter the following 'extra' attributes
+to be sent with your certificate request
+A challenge password []:
+An optional company name []:
+
+
+#SSL Crt 생성
+[root@Web&DNS ~]# openssl x509 -days 365 -req -in /etc/pki/tls/private/shopping.csr -signkey /etc/pki/tls/private/shopping.key -out /etc/pki/tls/certs/shopping.crt
+
+
+#SSL 설정 파일 수정
+[root@Web&DNS ~]# vi /etc/httpd/conf.d/ssl.conf
+
+59 DocumentRoot "/apache/www"
+60 ServerName www.shopping.com:443
+100 SSLCertificateFile /etc/pki/tls/certs/shopping.crt
+107 SSLCertificateKeyFile /etc/pki/tls/private/shopping.key
+
+
+#방화벽 등록
+[root@Web&DNS ~]# firewall-cmd --permanent --add-service=http
+[root@Web&DNS ~]# firewall-cmd --permanent --add-service=https
+[root@Web&DNS ~]# firewall-cmd --reload
+
+
+#index 파일 DocumentRoot 디렉터리로 이동
+
+[root@Web&DNS ~]# mv ~test/* /apache/www/
+
+
+#각 파일 허가권 및 소유권 조정
+
+[root@Web&DNS ~]#cd /
+[root@Web&DNS /]# chown -R root.apache /apache
+[root@Web&DNS /]# chmod 775 /apache
+
+
+[root@Web&DNS /]#cd /apache
+[root@Web&DNS /apache]# chmod 755 www
+
+
+[root@Web&DNS /apache]# cd www
+[root@Web&DNS /apache/www]# chmod 755 images php
+[root@Web&DNS /apache/www]# chmod 644 index*
+
+
+[root@Web&DNS /apache/www]#cd image
+[root@Web&DNS /apache/www/image]# chmod 644 ./*
+
+
+[root@Web&DNS /apache/www/image]# cd ../php
+[root@Web&DNS /apache/www/php]# chmod 644 ./* 
+
+
+[root@Web&DNS /apache/www/php]# systemctl start httpd
+[root@Web&DNS /apache/www/php]# systemctl enable httpd

@@ -1,0 +1,360 @@
+------------+---------------------------+---------------------------+------------
+            |                           |                           |
+       ens32|192.168.1.100         ens32|192.168.1.200         ens32|192.168.1.150
++-----------+-----------+   +-----------+-----------+   +-----------+-----------+
+|  [ Controller Node ]  |   |    [ Network Node ]   |   |    [ Compute Node ]   |
+|                       |   |                       |   |                       |
+|  MariaDB    RabbitMQ  |   |      Open vSwitch     |   |        Libvirt        |
+|  Memcached  httpd     |   |        L2 Agent       |   |     Nova Compute      |
+|  Keystone   Glance    |   |        L3 Agent       |   |      Open vSwitch     |
+|  Nova API             |   |     Metadata Agent    |   |        L2 Agent       |
+|  Neutron Server       |   |       DHCP Agent      |   |                       |
+|  Metadata Agent       |   |                       |   |                       |
++-----------------------+   +-----------------------+   +-----------------------+
+                                   ens33|(UP with no IP)        ens33|(UP with no IP)
+
+
+# Controller Node에서 설정
+
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 neutron
+
+
+# Openstack Neutron Service에서 사용할 사용자 생성 및 관리권한 부여작업을 진행
+[root@Controller ~(keystone)]# openstack role add --project service --user neutron admin
+
+
+
+# Neutron Service 등록
+[root@Controller ~(keystone)]# openstack service create --name neutron --description "OpenStack Networking service" network
+
+
+
+# Neutron Service 사용을 위한 EndPoint 생성
+[root@Controller ~(keystone)]# export controller=192.168.1.100
+[root@Controller ~(keystone)]# echo $controller
+192.168.1.100
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne network public http://$controller:9696
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne network internal http://$controller:9696
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne network admin http://$controller:9696
+
+
+
+# Neutron Service에서 사용 할 데이터베이스 및 사용자 생성 후 권한할당 진행
+[root@Controller ~(keystone)]# mysql -u root -p
+Enter password: 1
+
+MariaDB [(none)]> create database neutron_ml2;
+MariaDB [(none)]> grant all privileges on neutron_ml2.* to neutron@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on neutron_ml2.* to neutron@'%' identified by '1';
+MariaDB [(none)]> flush privileges;
+MariaDB [(none)]> exit
+
+
+
+# Neutron 패키지 설치
+[root@Controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-neutron openstack-neutron-ml2 
+
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/neutron/neutron.conf
+
+[DEFAULT]
+core_plugin = ml2
+service_plugins = router
+auth_strategy = keystone
+state_path = /var/lib/neutron
+dhcp_agent_notification = True
+allow_overlapping_ips = True
+notify_nova_on_port_status_changes = True
+notify_nova_on_port_data_changes = True
+transport_url = rabbit://openstack:password@192.168.1.100
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = neutron
+password = 1
+
+[database]
+connection = mysql+pymysql://neutron:1@192.168.1.100/neutron_ml2
+
+[nova]
+auth_url = http://192.168.1.100:5000
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+region_name = RegionOne
+project_name = service
+username = nova
+password = 1
+
+[oslo_concurrency]
+lock_path = $state_path/tmp
+
+
+
+# 설정 파일 수정
+# 213번째 라인으로 이동 후 주석해제 및 내용수정
+[root@Controller ~(keystone)]# vi /etc/neutron/metadata_agent.ini
+[DEFAULT]
+nova_metadata_host = 192.168.1.100
+metadata_proxy_shared_secret = 1
+
+213 memcache_servers = 192.168.1.100:11211
+
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/neutron/plugins/ml2/ml2_conf.ini
+[ml2]
+type_drivers = flat,vlan,gre,vxlan
+tenant_network_types =
+mechanism_drivers = openvswitch
+extension_drivers = port_security
+
+
+# [DEFAULT] 영역에 내용추가
+[root@Controller ~(keystone)]# vi /etc/nova/nova.conf
+
+use_neutron = True
+linuxnet_interface_driver = nova.network.linux_net.LinuxOVSInterfaceDriver
+firewall_driver = nova.virt.firewall.NoopFirewallDriver
+
+
+# 해당 설정파일 마지막라인에 내용추가
+[neutron]
+auth_url = http://192.168.1.100:5000
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+region_name = RegionOne
+project_name = service
+username = neutron
+password = 1
+service_metadata_proxy = True
+metadata_proxy_shared_secret = 1
+
+
+# Neutron 방화벽 등록
+[root@Controller ~(keystone)]# firewall-cmd --add-port=9696/tcp --permanent
+[root@Controller ~(keystone)]# firewall-cmd --reload
+
+
+# Neutron ML2 설정파일내용을 실제 운영되는 플러그인 정보로 사용하기 위한 심볼릭 링크 설정
+[root@controller ~(keystone)]# ln -s /etc/neutron/plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+
+# Neutron Service 관련 테이블 생성
+[root@controller ~(keystone)]# su -s /bin/bash neutron -c "neutron-db-manage --config-file /etc/neutron/neutron.conf --config-file /etc/neutron/plugin.ini upgrade head"
+
+
+# Neutron Server 및 각종 Agent 서비스 시작 및 자동시작 등록
+[root@controller ~(keystone)]# systemctl start openvswitch
+[root@controller ~(keystone)]# systemctl enable openvswitch
+[root@controller ~(keystone)]# systemctl start neutron-server neutron-metadata-agent
+[root@controller ~(keystone)]# systemctl enable neutron-server neutron-metadata-agent
+[root@controller ~(keystone)]# systemctl restart openstack-nova-api
+
+
+
+# Network Node에서 설정
+# Neutron 패키지 설치
+[root@network ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-neutron openstack-neutron-ml2 openstack-neutron-openvswitch libibverbs
+
+
+# 설정 파일 수정
+[root@network ~]# vi /etc/neutron/neutron.conf
+
+[DEFAULT]
+core_plugin = ml2
+service_plugins = router
+auth_strategy = keystone
+state_path = /var/lib/neutron
+allow_overlapping_ips = True
+transport_url = rabbit://openstack:password@192.168.1.100
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = neutron
+password = 1
+
+[oslo_concurrency]
+lock_path = $state_path/lock
+
+
+# 설정 파일 수정
+[root@network ~]# vi /etc/neutron/l3_agent.ini
+[DEFAULT]
+interface_driver = openvswitch
+
+
+# 설정 파일 수정
+[root@network ~]# vi /etc/neutron/dhcp_agent.ini
+[DEFAULT]
+interface_driver = openvswitch
+dhcp_driver = neutron.agent.linux.dhcp.Dnsmasq
+enable_isolated_metadata = true
+
+
+# 설정 파일 수정
+[root@network ~]# vi /etc/neutron/metadata_agent.ini
+[DEFAULT]
+nova_metadata_host = 192.168.1.100
+metadata_proxy_shared_secret = 1
+
+213 memcache_servers = 192.168.1.100:11211
+
+
+# 설정 파일 수정
+[root@network ~]# vi /etc/neutron/plugins/ml2/ml2_conf.ini
+[ml2]
+type_drivers = flat,vlan,gre,vxlan
+tenant_network_types =
+mechanism_drivers = openvswitch
+extension_drivers = port_security
+
+
+# 설정 파일 수정
+[root@network ~]# vi /etc/neutron/plugins/ml2/openvswitch_agent.ini
+[securitygroup]
+firewall_driver = openvswitch
+enable_security_group = true
+enable_ipset = true
+
+
+# Neutron ML2 설정파일내용을 실제 운영되는 플러그인 정보로 사용하기 위한 심볼릭 링크 설정
+[root@network ~]# ln -s /etc/neutron/plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+
+# Neutron Server 및 각종 Agent 서비스 시작 및 자동시작 등록
+[root@network ~]# systemctl start openvswitch
+[root@network ~]# systemctl enable openvswitch
+[root@network ~]# systemctl start neutron-dhcp-agent neutron-l3-agent neutron-metadata-agent neutron-openvswitch-agent
+[root@network ~]# systemctl enable neutron-dhcp-agent neutron-l3-agent neutron-metadata-agent neutron-openvswitch-agent
+
+
+
+# Compute Node에서 설정
+# Neutron 패키지 설치
+[root@Compute ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-neutron openstack-neutron-ml2 openstack-neutron-openvswitch libibverbs
+
+
+# 설정 파일 수정
+[root@compute ~]# vi /etc/neutron/neutron.conf
+[DEFAULT]
+core_plugin = ml2
+service_plugins = router
+auth_strategy = keystone
+state_path = /var/lib/neutron
+allow_overlapping_ips = True
+transport_url = rabbit://openstack:password@192.168.1.100
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = neutron
+password = 1
+
+[oslo_concurrency]
+lock_path = $state_path/lock
+
+
+# 설정 파일 수정
+[root@compute ~]# vi /etc/neutron/plugins/ml2/ml2_conf.ini
+[ml2]
+type_drivers = flat,vlan,gre,vxlan
+tenant_network_types =
+mechanism_drivers = openvswitch
+extension_drivers = port_security
+
+
+# 설정 파일 수정
+[root@compute ~]# vi /etc/neutron/plugins/ml2/openvswitch_agent.ini
+[securitygroup]
+firewall_driver = openvswitch
+enable_security_group = true
+enable_ipset = true
+
+# 설정 파일 수정
+[root@compute ~]# vi /etc/nova/nova.conf
+# [DEFAULT] 영역에 내용추가
+use_neutron = True
+linuxnet_interface_driver = nova.network.linux_net.LinuxOVSInterfaceDriver
+firewall_driver = nova.virt.firewall.NoopFirewallDriver
+vif_plugging_is_fatal = True
+vif_plugging_timeout = 300
+
+# 해당 설정파일 마지막라인에 내용추가
+[neutron]
+auth_url = http://192.168.1.100:5000
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+region_name = RegionOne
+project_name = service
+username = neutron
+password = 1
+service_metadata_proxy = True
+metadata_proxy_shared_secret = 1
+
+
+# Neutron ML2 설정파일내용을 실제 운영되는 플러그인 정보로 사용하기 위한 심볼릭 링크 설정
+[root@compute ~]# ln -s /etc/neutron/plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+
+# Neutron 각종 Agent 서비스 시작 및 자동시작 등록
+[root@compute ~]# systemctl start openvswitch
+[root@compute ~]# systemctl enable openvswitch
+
+[root@compute ~]# systemctl restart openstack-nova-compute
+[root@compute ~]# systemctl start neutron-openvswitch-agent
+[root@compute ~]# systemctl enable neutron-openvswitch-agent
+
+
+
+# Controller Node에서 작업결과 확인
+
+[root@Controller ~(keystone)]# openstack network agent list
++--------------------------------------+--------------------+------------+-------------------+-------+-------+---------------------------+
+| ID                                   | Agent Type         | Host       | Availability Zone | Alive | State | Binary                    |
++--------------------------------------+--------------------+------------+-------------------+-------+-------+---------------------------+
+| 05549266-1c02-4867-a563-208248646f6d | L3 agent           | Network    | nova              | :-)   | UP    | neutron-l3-agent          |
+| 1bf934d6-8279-43a1-91d7-9c5fced6b8e7 | Open vSwitch agent | Network    | None              | :-)   | UP    | neutron-openvswitch-agent |
+| 20d11feb-f772-4e7a-b347-a8673721eacd | Open vSwitch agent | Compute    | None              | :-)   | UP    | neutron-openvswitch-agent |
+| 433711e4-fdf9-4e12-bfdb-c989928665fd | Metadata agent     | Controller | None              | :-)   | UP    | neutron-metadata-agent    |
+| 692f15ac-82c2-43cd-92c3-0a0a8cefde56 | Metadata agent     | Network    | None              | :-)   | UP    | neutron-metadata-agent    |
+| c4303fb6-529f-4cac-b886-d7ce4e6eceb7 | DHCP agent         | Network    | nova              | :-)   | UP    | neutron-dhcp-agent        |
++--------------------------------------+--------------------+------------+-------------------+-------+-------+---------------------------+
+
+[root@Controller ~(keystone)]# openstack security group list
++--------------------------------------+---------+----------------+----------------------------------+------+
+| ID                                   | Name    | Description    | Project                          | Tags |
++--------------------------------------+---------+----------------+----------------------------------+------+
+| 647a73f3-faca-4808-bede-c351bb787226 | default | 기본 보안 그룹    | 74dd78df41734120ab0a0f7f612f9d09 |  []  |
++--------------------------------------+---------+----------------+----------------------------------+------+
+
+[root@Controller ~(keystone)]# openstack compute service list
++----+----------------+------------+----------+---------+-------+----------------------------+
+| ID | Binary         | Host       | Zone     | Status  | State | Updated At                 |
++----+----------------+------------+----------+---------+-------+----------------------------+
+|  3 | nova-console   | Controller | internal | enabled | up    | 2020-05-20T06:15:50.000000 |
+|  4 | nova-conductor | Controller | internal | enabled | up    | 2020-05-20T06:15:43.000000 |
+|  5 | nova-scheduler | Controller | internal | enabled | up    | 2020-05-20T06:15:44.000000 |
+|  9 | nova-compute   | Compute    | nova     | enabled | up    | 2020-05-20T06:15:46.000000 |
++----+----------------+------------+----------+---------+-------+----------------------------+

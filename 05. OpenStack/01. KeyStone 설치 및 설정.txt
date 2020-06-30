@@ -1,0 +1,119 @@
+   ens32|192.168.1.100 
++-----------+-----------+
+|  [ Controller Node ]  |
+|                       |
+|  MariaDB    RabbitMQ  |
+|  Memcached  httpd     |
+|  Keystone             |
++-----------------------+
+
+
+# Openstack Keystone Service에서 사용 할 데이터베이스 및 사용자 생성 후 권한할당 진행
+[root@Controller ~]# mysql -u root -p
+
+MariaDB [(none)]> create database keystone;
+MariaDB [(none)]> grant all privileges on keystone.* to keystone@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on keystone.* to keystone@'%' identified by '1';
+MariaDB [(none)]> flush privileges;
+MariaDB [(none)]> exit
+
+
+# Keystone Service 관련 패키지 설치
+[root@Controller ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-keystone openstack-utils python-openstackclient httpd mod_wsgi
+
+
+
+# Keystone 설정 파일 수정
+[root@Controller ~]# vi /etc/keystone/keystone.conf
+430 memcache_servers = 192.168.1.100:11211
+574 connection = mysql+pymysql://keystone:itbank@192.168.1.100/keystone
+2439 provider = fernet
+
+
+
+# Keystone 관련 테이블 생성 ( 설정파일의 연결정보를 참조하여 생성 )
+[root@Controller ~]# su -s /bin/bash keystone -c "keystone-manage db_sync"
+[root@Controller ~]# mysql -u root -p keystone -e "show tables"
+
+
+
+# fetnet Token을 암호화하기 위한 키값 생성 후 암호화 키값의 소유자를 keystone 사용자와 그룹으로 지정 
+[root@Controller ~]# keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
+[root@Controller ~]# ls -l /etc/keystone/fernet-keys/
+합계 8
+-rw------- 1 keystone keystone 44  5월 19 12:53 0 ( 토큰 복호화 키 )
+-rw------- 1 keystone keystone 44  5월 19 12:53 1 ( 토큰 암호화 키 )
+
+
+
+# keystone DB내의 User Table에서 사용 할 Key값 생성, 사용자의 P/W를 저장 할 때 암호화하여 저장 
+[root@Controller ~]# keystone-manage credential_setup --keystone-user keystone --keystone-group keystone
+[root@Controller ~]# ls -l /etc/keystone/credential-keys/
+합계 8
+-rw------- 1 keystone keystone 44  5월 19 12:53 0
+-rw------- 1 keystone keystone 44  5월 19 12:53 1
+
+
+
+# Keystone manage 명령어를 이용하여 기본 관리자 계정 admin의 패스워드를 정의
+# 기본 Region 이름 정의 및 Keystone EndPoint 설정작업을 진행
+[root@Controller ~]# export controller=192.168.1.100
+[root@Controller ~]# echo $controller
+192.168.1.100
+
+[root@Controller ~]# keystone-manage bootstrap --bootstrap-password 1 \
+> --bootstrap-admin-url http://$controller:5000/v3/ \
+> --bootstrap-internal-url http://$controller:5000/v3/ \
+> --bootstrap-public-url http://$controller:5000/v3/ \
+> --bootstrap-region-id RegionOne
+
+
+
+# Keystone 및 Apache 방화벽 설정
+[root@Controller ~]# firewall-cmd --add-service=http --permanent
+[root@Controller ~]# firewall-cmd --add-port=5000/tcp --permanent
+[root@Controller ~]# firewall-cmd --reload
+
+
+# Apache Web Server에서 keystone에서 제공하는 wsgi 설정파일을 인식할 수 있도록 wsgi-keystone.conf 파일을 심볼릭 링크를 설정한다. 
+[root@Controller ~]# ln -s /usr/share/keystone/wsgi-keystone.conf /etc/httpd/conf.d/
+
+
+# Apache WEB Service 시작 및 자동시작 등록
+[root@Controller ~]# systemctl start httpd
+[root@Controller ~]# systemctl enable httpd
+
+
+
+# Keystone 인증정보 및 작업영역에 대한 설정값을 환경변수로 생성
+# 생성 된 환경변수를 로그인시 바로 적용하기 위해 root 계정의 .bash_profile에 등록
+[root@Controller ~]# vi ~/keystonerc
+export OS_PROJECT_DOMAIN_NAME=default
+export OS_USER_DOMAIN_NAME=default
+export OS_PROJECT_NAME=admin
+export OS_USERNAME=admin
+export OS_PASSWORD=1
+export OS_AUTH_URL=http://192.168.1.100:5000/v3
+export OS_IDENTITY_API_VERSION=3
+export OS_IMAGE_API_VERSION=2
+export PS1='[\u@\h \W(keystone)]\$ '
+
+[root@Controller ~]# chmod 600 ~/keystonerc
+[root@Controller ~]# source ~/keystonerc
+[root@Controller ~(keystone)]# echo "source ~/keystonerc " >> ~/.bash_profile
+
+
+
+# 실제 작업을 진행할 Project 생성 ( 프로젝트 이름 : service )
+
+[root@Controller ~(keystone)]# openstack project create --domain default --description "Service Project" service
+
+
+
+[root@Controller ~(keystone)]# openstack project list
++----------------------------------+---------+
+| ID                               | Name    |
++----------------------------------+---------+
+| 74dd78df41734120ab0a0f7f612f9d09 | admin   |
+| b0448c18b257446bb0fbd1584db01c92 | service |
++----------------------------------+---------+

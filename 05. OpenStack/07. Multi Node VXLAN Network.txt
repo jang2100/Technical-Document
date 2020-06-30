@@ -1,0 +1,273 @@
+# Controller Node의 RAM을 증가 시킨 후 작업 ( 6GB ~ 7GB )
+
+------------+---------------------------+---------------------------+------------
+            |                           |                           |
+       ens32|192.168.1.100         ens32|192.168.1.200         ens32|192.168.1.150
++-----------+-----------+   +-----------+-----------+   +-----------+-----------+
+|  [ Controller Node ]  |   |    [ Network Node ]   |   |    [ Compute Node ]   |
+|                       |   |                       |   |                       |
+|  MariaDB    RabbitMQ  |   |      Open vSwitch     |   |        Libvirt        |
+|  Memcached  httpd     |   |        L2 Agent       |   |     Nova Compute      |
+|  Keystone   Glance    |   |        L3 Agent       |   |      Open vSwitch     |
+|  Nova API             |   |     Metadata Agent    |   |        L2 Agent       |
+|  Neutron Server       |   |       DHCP Agent      |   |                       |
+|  Metadata Agent       |   |                       |   |                       |
++-----------------------+   +-----------------------+   +-----------------------+
+                                   ens33|(UP with no IP) 
+
+
+
+# VXLAN Network 생성
+
+[ ### Controller Node 설정 ### ]
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/neutron/plugins/ml2/ml2_conf.ini
+
+[ml2]
+type_drivers = flat,vlan,gre,vxlan
+tenant_network_types = vxlan
+mechanism_drivers = openvswitch
+extension_drivers = port_security
+# Tenant_Network_Types 설정을 vxlan으로 지정
+
+[ml2_type_flat]
+flat_networks = mynet1
+
+[ml2_type_vxlan]
+vni_ranges = 1:1000
+
+# Neutron Server 및 Metadata 서비스 재시작
+[root@Controller ~(keystone)]# systemctl restart neutron-server neutron-metadata-agent
+
+
+
+
+[ ### Network Node 설정 ### ]
+
+# Neutron openvswitch agent 서비스 재시작
+[root@Network ~]# systemctl restart neutron-openvswitch-agent
+
+# 설정 파일 수정
+[root@network ~]# vi /etc/sysctl.conf
+net.ipv4.ip_forward=1
+net.ipv4.conf.default.rp_filter=0
+net.ipv4.conf.all.rp_filter=0
+
+[root@network ~]# sysctl -p
+
+
+[root@Network ~]# ovs-vsctl add-br br-ens33
+[root@Network ~]# ovs-vsctl add-port br-ens33 ens33
+[root@Network ~]# ovs-vsctl list-ports br-ens33
+ens33
+
+# 설정 파일 수정
+[root@Network ~]# vi /etc/neutron/plugins/ml2/ml2_conf.ini
+[ml2]
+type_drivers = flat,vlan,gre,vxlan
+tenant_network_types = vxlan
+mechanism_drivers = openvswitch
+extension_drivers = port_security
+
+[ml2_type_flat]
+flat_networks = mynet1
+
+[ml2_type_vxlan]
+vni_ranges = 1:1000
+
+# 설정 파일 수정
+[root@Network ~]# vi /etc/neutron/plugins/ml2/openvswitch_agent.ini
+[agent]
+tunnel_types = vxlan
+prevent_arp_spoofing = True
+
+
+[ovs]
+local_ip = 192.168.1.200
+bridge_mappings = mynet1:br-ens33
+
+
+# 각종 서비스 재시작
+[root@Network ~]# for service in dhcp-agent l3-agent metadata-agent openvswitch-agent; do
+> systemctl restart neutron-$service
+> done
+
+
+[ ### Compute Node 설정 ### ]
+
+# 설정 파일 수정
+[root@Compute ~]# vi /etc/sysctl.conf
+net.ipv4.ip_forward=1
+net.ipv4.conf.default.rp_filter=0
+net.ipv4.conf.all.rp_filter=0
+
+[root@Compute ~]# sysctl -p
+
+# 설정 파일 수정
+[root@Compute ~]# vi /etc/neutron/plugins/ml2/ml2_conf.ini
+[ml2]
+type_drivers = flat,vlan,gre,vxlan
+tenant_network_types = vxlan
+mechanism_drivers = openvswitch
+extension_drivers = port_security
+
+[ml2_type_flat]
+flat_networks = mynet1
+
+[ml2_type_vxlan]
+vni_ranges = 1:1000
+
+# 설정 파일 수정
+[root@Compute ~]# vi /etc/neutron/plugins/ml2/openvswitch_agent.ini
+[agent]
+tunnel_types = vxlan
+prevent_arp_spoofing = True
+
+[ovs]
+local_ip = 192.168.1.150
+
+# Neutron openvswitch agent 및 Nova Compute 서비스 재시작
+[root@Compute ~]# systemctl restart neutron-openvswitch-agent openstack-nova-compute
+
+
+
+[ ### Controller Node 설정 ### ]
+
+# 가상의 라우터를 생성
+[root@Controller ~(keystone)]# openstack router create router01
+
+
+# 내부 네트워크 생성
+[root@Controller ~(keystone)]# openstack network create int_net --provider-network-type vxlan
+
+
+# 실제 인스턴스에게 부여 될 내부네트워크의 Subnet 정의.
+[root@Controller ~(keystone)]# openstack subnet create int_subnet --network int_net \
+> --subnet-range 10.10.1.0/24 --gateway 10.10.1.1 --dns-nameserver 8.8.8.8
+
+
+# 내부 네트워크에서 사용 할 서브넷을 가상라우터에 등록
+[root@Controller ~(keystone)]# openstack router add subnet router01 int_subnet
+
+
+# 외부에서 사용되는 네트워크를 정의
+[root@Controller ~(keystone)]# openstack network create \
+> --provider-physical-network mynet1 \
+> --provider-network-type flat --external ext_net
+
+
+# 외부 네트워크에서 사용 될 Subnet 정의
+[root@Controller ~(keystone)]# openstack subnet create ext_subnet \
+> --network ext_net --subnet-range 192.168.1.0/24 \
+> --allocation-pool start=192.168.1.200,end=192.168.1.254 \
+> --gateway 192.168.1.2 --dns-nameserver 8.8.8.8 --no-dhcp
+
+
+# 외부 네트워크에서 사용 할 서브넷을 가상라우터에 등록
+[root@Controller ~(keystone)]# openstack router set router01 --external-gateway ext_net
+
+
+# 현재 구성되어있는 네트워크 역할기반 접근제어 리스트목록을 확인 
+[root@Controller ~(keystone)]# openstack network rbac list
++--------------------------------------+-------------+--------------------------------------+
+| ID                                   | Object Type | Object ID                            |
++--------------------------------------+-------------+--------------------------------------+
+| 977d15d5-c169-4950-afd5-049a89e291e4 | network     | ca43a033-9461-491c-b3a3-e010b451e10f |
++--------------------------------------+-------------+--------------------------------------+
+
+
+# 사용자 생성 및 관리권한 부여작업을 진행
+[root@Controller ~(keystone)]# openstack project create --domain default --description "Cloud Project" Cloud
+[root@Controller ~(keystone)]# openstack role create CloudUser
+[root@Controller ~(keystone)]# openstack user create --domain default --project Cloud --password 1 Cloud_Admin
+[root@Controller ~(keystone)]# openstack role add --project Cloud --user Cloud_Admin CloudUser
+
+
+
+[root@Controller ~(keystone)]# netID=$(openstack network list | grep int_net | awk '{ print $2 }')
+[root@Controller ~(keystone)]# projectID=$(openstack project list | grep Cloud | awk '{ print $2 }')
+
+
+# Cloud Project에 내부네트워크에 접근 할 수 있는 권한을 부여
+[root@Controller ~(keystone)]# openstack network rbac create --target-project $projectID --type network --action access_as_shared $netID
+
+
+[root@Controller ~(keystone)]# openstack flavor create --id 0 --vcpus 2 --ram 2048 --disk 10 m1.small
+[root@Controller ~(keystone)]# openstack flavor create --id 1 --vcpus 1 --ram 1024 --disk 1 m1.xsmall
+
+
+[root@Controller ~(keystone)]# useradd centos
+[root@Controller ~(keystone)]# passwd 1
+
+
+# Centos 계정으로 로그인 후 작업을 진행 
+
+[centos@Controller ~]$ vi ~/keystonerc
+export OS_PROJECT_DOMAIN_NAME=default
+export OS_USER_DOMAIN_NAME=default
+export OS_PROJECT_NAME=Cloud
+export OS_USERNAME=Cloud_Admin
+export OS_PASSWORD=1
+export OS_AUTH_URL=http://192.168.1.100:5000/v3
+export OS_IDENTITY_API_VERSION=3
+export OS_IMAGE_API_VERSION=2
+export PS1='[\u@\h \W(keystone)]\$ '
+
+[centos@Controller ~]$ chmod 600 ~/keystonerc
+[centos@Controller ~]$ source ~/keystonerc
+[centos@Controller ~(keystone)]$ echo "source ~/keystonerc " >> ~/.bash_profile
+
+[centos@Controller ~(keystone)]$ openstack security group create security01
+
+
+[centos@Controller ~(keystone)]$ ssh-keygen -q -N ""
+Enter file in which to save the key (/home/centos/.ssh/id_rsa):
+
+[centos@Controller ~(keystone)]$ openstack keypair create --public-key ~/.ssh/id_rsa.pub SSH_KEY
+
+
+[centos@Controller ~(keystone)]$ netID=$(openstack network list | grep int_net | awk '{ print $2 }')
+[centos@Controller ~(keystone)]$ echo $netID
+cd996287-090a-4a3c-949b-314e8b0a86db
+
+[centos@Controller ~(keystone)]$ openstack server create --flavor m1.small --image CentOS7_image --security-group security01 \
+> --nic net-id=$netID --key-name SSH_KEY Cloud_CentOS_7
+
++-----------------------------+------------------------------------------------------+
+
+
+# Cloud 프로젝트에서 생성 된 Cloud_CentOS_7 인스턴스와 연결 할 플로팅 IP주소를 생성
+[centos@Controller ~(keystone)]$ openstack floating ip create ext_net
+
+# 새로 생성한 플로팅 IP주소를 Cloud_CentOS_7 인스턴스와 연결
+[centos@Controller ~(keystone)]$ openstack server add floating ip Cloud_CentOS_7 192.168.1.251
+[centos@Controller ~(keystone)]$ openstack floating ip show 192.168.1.251
+
+
+# 플로팅 IP주소의 상세정보를 확인하여 연결 된 인스턴스의 정보 확인
+[centos@Controller ~(keystone)]$ openstack floating ip list
++----------+---------------------+------------------+----------+-----------------+----------------------------------+
+| ID       | Floating IP Address | Fixed IP Address | Port     | Floating Network| Project                          |
++----------+---------------------+------------------+----------+-----------------+----------------------------------+
+| 6a998f54 | 192.168.1.251       | 10.10.1.149      | 25d50d42 |    ca43a033     | 35b0fb30aba94f0db2401e54e58ba2c6 |
++----------+---------------------+------------------+----------+-----------------+----------------------------------+
+
+
+[centos@Controller ~(keystone)]$ openstack server list
++--------------------------------------+----------------+--------+------------------------------------+---------------+----------+
+| ID                                   | Name           | Status | Networks                           | Image         | Flavor   |
++--------------------------------------+----------------+--------+------------------------------------+---------------+----------+
+| dfca0533-94d5-4ecd-b840-bf14fd95b0e4 | Cloud_CentOS_7 | ACTIVE | int_net=10.10.1.149, 192.168.1.251 | CentOS7_image | m1.small |
++--------------------------------------+----------------+--------+------------------------------------+---------------+----------+
+
+# ping 과 ssh 접속을 위한 그룹정책 설정
+[centos@Controller ~(keystone)]$ openstack security group rule create --protocol icmp --ingress security01
+[centos@Controller ~(keystone)]$ openstack security group rule create --protocol tcp --dst-port 22:22 security01
+
+# ping 확인
+[centos@Controller ~(keystone)]$ ping 192.168.1.251 -c 4
+PING 192.168.1.251 (192.168.1.251) 56(84) bytes of data.
+
+
+

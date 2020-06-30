@@ -1,0 +1,300 @@
+   ens32|192.168.1.100 
++-----------+-----------+
+|  [ Controller Node ]  |
+|                       |
+|  MariaDB    RabbitMQ  |
+|  Memcached  httpd     |
+|  Keystone   Glance    |
+|  Nova API             |
++-----------------------+
+
+
+# Nova Service를 관리할 사용자 생성 및 패스워드 지정
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 nova
+
+
+# 위에서 생성 한 Nova 사용자에게 관리권한을 부여
+[root@Controller ~(keystone)]# openstack role add --project service --user nova admin
+
+
+# placement Service를 관리할 사용자 생성 및 패스워드 지정
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 placement
+
+
+# 위에서 생성 한 placement 사용자에게 관리권한을 부여
+[root@Controller ~(keystone)]# openstack role add --project service --user placement admin
+
+
+# Nova Service 등록
+[root@Controller ~(keystone)]# openstack service create --name nova --description "OpenStack Compute service" compute
+
+
+# Placement Service 등록
+[root@Controller ~(keystone)]# openstack service create --name placement --description "OpenStack Compute Placement service" placement
+
+
+
+# Compute Service 사용을 위한 EndPoint 생성
+[root@Controller ~(keystone)]# export controller=192.168.1.100
+[root@Controller ~(keystone)]# echo $controller
+192.168.1.100
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne compute public http://$controller:8774/v2.1/%\(tenant_id\)s
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne compute internal http://$controller:8774/v2.1/%\(tenant_id\)s
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne compute admin http://$controller:8774/v2.1/%\(tenant_id\)s
+
+
+
+# Placement Service 사용을 위한 EndPoint 생성
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne placement public http://$controller:8778
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne placement internal http://$controller:8778
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne placement admin http://$controller:8778
+
+
+
+# Openstack nova Service에서 사용 할 데이터베이스 및 사용자 생성 후 권한할당 진행
+[root@Controller ~(keystone)]# mysql -u root -p
+
+MariaDB [(none)]> create database nova;
+MariaDB [(none)]> grant all privileges on nova.* to nova@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on nova.* to nova@'%' identified by '1';
+
+
+
+# nova-api에서 사용 할 데이터베이스 및 사용자 생성 후 권한할당 진행
+MariaDB [(none)]> create database nova_api;
+MariaDB [(none)]> grant all privileges on nova_api.* to nova@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on nova_api.* to nova@'%' identified by '1';
+
+
+# nova_cell0에서 사용 할 데이터베이스 및 사용자 생성 후 권한할당 진행
+MariaDB [(none)]> create database nova_cell0;
+MariaDB [(none)]> grant all privileges on nova_cell0.* to nova@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on nova_cell0.* to nova@'%' identified by '1';
+
+
+
+# Placement에서 사용 할 데이터베이스 및 사용자 생성 후 권한할당 진행
+MariaDB [(none)]> create database placement;
+MariaDB [(none)]> grant all privileges on placement.* to placement@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on placement.* to placement@'%' identified by '1';
+MariaDB [(none)]> flush privileges;
+MariaDB [(none)]> exit
+
+
+
+# Nova Service 및 Placement Service 운영에 필요한 패키지 설치
+[root@Controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-nova openstack-placement-api
+
+
+# 기존내용 전부 삭제 후 작업
+[root@Controller ~(keystone)]# vi /etc/nova/nova.conf
+ 
+[DEFAULT]
+my_ip = 192.168.1.100
+state_path = /var/lib/nova
+enabled_apis = osapi_compute,metadata
+log_dir = /var/log/nova
+transport_url = rabbit://openstack:password@192.168.1.100
+
+[api]
+auth_strategy = keystone
+
+[glance]
+api_servers = http://192.168.1.100:9292
+
+[oslo_concurrency]
+lock_path = $state_path/tmp
+
+[api_database]
+connection = mysql+pymysql://nova:1@192.168.1.100/nova_api
+
+[database]
+connection = mysql+pymysql://nova:1@192.168.1.100/nova
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = nova
+password = 1
+
+[placement]
+auth_url = http://192.168.1.100:5000
+os_region_name = RegionOne
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = placement
+password = 1
+
+[wsgi]
+api_paste_config = /etc/nova/api-paste.ini
+
+
+
+# 기존내용 전부 삭제 후 작업
+[root@Controller ~(keystone)]# vi /etc/placement/placement.conf
+
+[DEFAULT]
+debug = false
+
+[api]
+auth_strategy = keystone
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = placement
+password = 1
+
+[placement_database]
+connection = mysql+pymysql://placement:1@192.168.1.100/placement
+
+
+
+# Placement 모듈에서 /usr/bin 디렉터리에 접근할 수 있는 권한을 할당
+[root@Controller ~(keystone)]# vi /etc/httpd/conf.d/00-placement-api.conf
+16   <Directory /usr/bin>
+17     Require all granted
+18   </Directory>
+
+
+# Nova Service 관련 포트에대한 방화벽설정을 진행
+[root@Controller ~(keystone)]# firewall-cmd --add-port={6080/tcp,6081/tcp,6082/tcp,8774/tcp,8775/tcp,8778/tcp} --permanent
+[root@Controller ~(keystone)]# firewall-cmd --reload
+
+
+
+# Nova 각 서비스 및 API에 필요한 테이블 생성 작업을 진행
+# Nova 서비스 운영에 필요한 데이터를 저장하기위한 논리적인 Cell 영역 또한 함께 생성 
+[root@Controller ~(keystone)]# su -s /bin/bash placement -c "placement-manage db sync"
+[root@Controller ~(keystone)]# su -s /bin/bash nova -c "nova-manage api_db sync"
+[root@Controller ~(keystone)]# su -s /bin/bash nova -c "nova-manage cell_v2 map_cell0"
+[root@Controller ~(keystone)]# su -s /bin/bash nova -c "nova-manage db sync"
+[root@Controller ~(keystone)]# su -s /bin/bash nova -c "nova-manage cell_v2 create_cell --name cell1"
+
+
+
+
+[root@Controller ~(keystone)]# nova-manage cell_v2 list_cells
++-------+---------------+---------------------------------------+----------------------------------------------------+----------+
+|  Name |     UUID      |             Transport URL             |                Database Connection                 | Disabled |
++-------+---------------+---------------------------------------+----------------------------------------------------+----------+
+| cell0 | 00000000-0000 |                 none:/                | mysql+pymysql://nova:****@192.168.1.100/nova_cell0 |  False   |
+| cell1 | 0fb8eba3-9606 | rabbit://openstack:****@192.168.1.100 |    mysql+pymysql://nova:****@192.168.1.100/nova    |  False   |
++-------+---------------+---------------------------------------+----------------------------------------------------+----------+
+
+
+# nova DB에 생성 된 Table 목록 확인 ( 중간 생략 )
+[root@Controller ~(keystone)]# mysql -u root -p nova -e "show tables"
+Enter password: 1
++--------------------------------------------+
+| Tables_in_nova                             |
++--------------------------------------------+
+| agent_builds                               |
+| aggregate_hosts                            |
+| aggregate_metadata                         |
+| aggregates                                 |
+| allocations                                |
+| block_device_mapping                       |
+| bw_usage_cache                             |
++--------------------------------------------+
+
+
+
+# nova_api DB에 생성 된 Table 목록 확인 ( 중간 생략 )
+[root@Controller ~(keystone)]# mysql -u root -p nova_api -e "show tables"
+Enter password: 1
++------------------------------+
+| Tables_in_nova_api           |
++------------------------------+
+| aggregate_hosts              |
+| aggregate_metadata           |
+| aggregates                   |
+| allocations                  |
+| build_requests               |
+| cell_mappings                |
++------------------------------+
+
+
+# nova_cell0 DB에 생성 된 Table 목록 확인 ( 중간 생략 )
+[root@Controller ~(keystone)]# mysql -u root -p nova_cell0 -e "show tables"
+Enter password: 1
++--------------------------------------------+
+| Tables_in_nova_cell0                       |
++--------------------------------------------+
+| agent_builds                               |
+| aggregate_hosts                            |
+| aggregate_metadata                         |
+| aggregates                                 |
+| allocations                                |
+| block_device_mapping                       |
+| bw_usage_cache                             |
+| cells                                      | 
++--------------------------------------------+
+
+
+# placement DB에 생성 된 Table 목록 확인 
+[root@Controller ~(keystone)]# mysql -u root -p placement -e "show tables"
+Enter password: 1
++----------------------------------+
+| Tables_in_placement              |
++----------------------------------+
+| alembic_version                  |
+| allocations                      |
+| consumers                        |
+| inventories                      |
+| placement_aggregates             |
+| projects                         |
+| resource_classes                 |
+| resource_provider_aggregates     |
+| resource_provider_traits         |
+| resource_providers               |
+| traits                           |
+| users                            |
++----------------------------------+
+
+
+
+# Placement Service를 시작하기 위해 WEB Server를 재시작 ( Apache 모듈형식으로 동작 )
+# Placement Log의 소유권한 변경작업을 진행
+[root@Controller ~(keystone)]# systemctl restart httpd
+[root@Controller ~(keystone)]# chown placement. /var/log/placement/placement-api.log
+[root@Controller ~(keystone)]# ls -ld /var/log/placement/placement-api.log
+-rw-r--r-- 1 placement placement 0  5월 19 18:33 /var/log/placement/placement-api.log
+
+
+# Nova Service 관련 서비스를 시작 및 자동시작 등록작업을 진행
+[root@Controller ~(keystone)]# for service in api console conductor scheduler novncproxy; do
+> systemctl start openstack-nova-$service
+> systemctl enable openstack-nova-$service
+> done
+
+
+# Nova Service 관련 서비스 활성화 확인
+[root@Controller ~(keystone)]# for service in api console conductor scheduler novncproxy; do
+> systemctl status openstack-nova-$service
+> done
+
+
+
+# Compute Service 관련 서비스 활성화 확인
+[root@Controller ~(keystone)]# openstack compute service list
++----+----------------+------------+----------+---------+-------+----------------------------+
+| ID | Binary         | Host       | Zone     | Status  | State | Updated At                 |
++----+----------------+------------+----------+---------+-------+----------------------------+
+|  3 | nova-console   | Controller | internal | enabled | up    | 2020-05-19T09:47:36.000000 |
+|  4 | nova-conductor | Controller | internal | enabled | up    | 2020-05-19T09:47:37.000000 |
+|  5 | nova-scheduler | Controller | internal | enabled | up    | 2020-05-19T09:47:39.000000 |
++----+----------------+------------+----------+---------+-------+----------------------------+

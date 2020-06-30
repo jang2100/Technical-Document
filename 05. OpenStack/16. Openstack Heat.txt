@@ -1,0 +1,267 @@
+------------+---------------------------+---------------------------+------------
+            |                           |                           |
+       ens32|192.168.1.100         ens32|192.168.1.200         ens32|192.168.1.150
++-----------+-----------+   +-----------+-----------+   +-----------+-----------+
+|    [ Control Node ]   |   |    [ Network Node ]   |   |    [ Compute Node ]   |
+|                       |   | DHCP Agent NFS_Client |   |        Libvirt	|
+|  MariaDB    RabbitMQ  |   |     Open vSwitch	    |	|     Nova Compute	|
+|  Memcached  httpd     |   |       L2 Agent	    |	|     Open vSwitch	|
+|  Keystone   Glance    |   |       L3 Agent	    |	|	L2 Agent	|
+|  Nova API    		|   |    Metadata Agent	    |	|      NFS_Client	|
+|  Neutron Server       |   |     iSCSI-target	    |	|     Swift-Account	|
+|  Metadata Agent       |   |    Cinder Volume 	    |	|     Swift-Container	|
+|  Cinder API 		|   |	 Swift-Account 	    |	|     Swift-Object	|
+|  Heat Engine 		|   |    Swift-Container    |	+-----------------------+
+|  API-CFN   Heat API   |   |    Swift-Object       |	
++-----------------------+   +-----------------------+   
+
+
+
+[ ### Controller Node ### ]
+
+# Heat 패키지 설치
+[root@Controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-heat-common python-heatclient \
+openstack-heat-api openstack-heat-api-cfn openstack-heat-engine
+
+# Heat Service를 관리할 사용자 생성 및 관리 권한을 부여
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 heat
+[root@Controller ~(keystone)]# openstack role add --project service --user heat admin
+[root@Controller ~(keystone)]# openstack role create heat_stack_owner
+[root@Controller ~(keystone)]# openstack role create heat_stack_user
+[root@Controller ~(keystone)]# openstack role add --project admin --user admin heat_stack_owner
+
+
+# Heat Service 등록
+[root@Controller ~(keystone)]# openstack service create --name heat --description "Openstack Orchestration" orchestration
+[root@Controller ~(keystone)]# openstack service create --name heat-cfn --description "Openstack Orchestration" cloudformation
+
+
+
+# Heat Service 사용을 위한 EndPoint 생성
+[root@Controller ~(keystone)]# heat_api=192.168.1.200
+[root@Controller ~(keystone)]# echo $heat_api
+192.168.1.200
+
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne orchestration public http://$heat_api:8004/v1/%\(tenant_id\)s
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne orchestration internal http://$heat_api:8004/v1/%\(tenant_id\)s
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne orchestration admin http://$heat_api:8004/v1/%\(tenant_id\)s
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne cloudformation public http://$heat_api:8000/v1
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne cloudformation internal http://$heat_api:8000/v1
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne cloudformation admin http://$heat_api:8000/v1
+
+
+
+# Heat 사용자 생성 및 관리 권한 부여
+[root@Controller ~(keystone)]# openstack domain create --description "Stack projects and users" heat
+[root@Controller ~(keystone)]# openstack user create --domain heat --password 1 heat_domain_admin
+[root@Controller ~(keystone)]# openstack role add --domain heat --user heat_domain_admin admin
+
+
+
+# Heat Database 생성 및 계정 생성
+[root@Controller ~(keystone)]# mysql -u root -p
+MariaDB [(none)]> create database heat;
+MariaDB [(none)]> grant all privileges on heat.* to heat@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on heat.* to heat@'%' identified by '1';
+MariaDB [(none)]> flush privileges;
+
+
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/heat/heat.conf
+
+[DEFAULT]
+deferred_auth_method = trusts
+trusts_delegated_roles = heat_stack_owner
+
+heat_metadata_server_url = http://192.168.1.200:8000
+heat_waitcondition_server_url = http://192.168.1.200:8000/v1/waitcondition
+heat_watch_server_url = http://192.168.1.200:8003
+heat_stack_user_role = heat_stack_user
+
+stack_user_domain_name = heat
+stack_domain_admin = heat_domain_admin
+stack_domain_admin_password = 1
+transport_url = rabbit://openstack:password@192.168.1.100
+
+[database]
+connection = mysql+pymysql://heat:1@192.168.1.100/heat
+
+[clients_keystone]
+auth_uri = http://192.168.1.100:5000
+
+[ec2authtoken]
+auth_uri = http://192.168.1.100:5000
+
+[heat_api]
+bind_host = 0.0.0.0
+bind_port = 8004
+
+[heat_api_cfn]
+bind_host = 0.0.0.0
+bind_port = 8000
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = heat
+password = 1
+
+[trustee]
+auth_plugin = password
+auth_url = http://192.168.1.100:5000
+username = heat
+password = 1
+user_domain_name = default
+
+
+# Database 연동
+[root@Controller ~(keystone)]# su -s /bin/bash heat -c "heat-manage db_sync"
+
+
+# Heat Service 방화벽설정 및 서비스 시작, 자동시작 등록
+[root@Controller ~(keystone)]# systemctl start openstack-heat-api openstack-heat-api-cfn openstack-heat-engine
+[root@Controller ~(keystone)]# systemctl enable openstack-heat-api openstack-heat-api-cfn openstack-heat-engine
+[root@Controller ~(keystone)]# firewall-cmd --add-port={8000/tcp,8004/tcp} --permanent
+[root@Controller ~(keystone)]# firewall-cmd --reload
+
+
+# 템플릿 생성
+[root@Controller ~(keystone)]# vi /etc/heat/templates/test.yml
+heat_template_version: 2015-10-15
+
+resources:
+  floating_ip:
+    type: OS::Nova::FloatingIP
+    properties:
+      pool: ext_net
+
+  instance_port:
+    type: OS::Neutron::Port
+    properties:
+      network: int_net
+      security_groups:
+        - security01
+      fixed_ips:
+        - subnet_id: int_subnet
+
+  server:
+    type: OS::Nova::Server
+    properties:
+      name: Web_Server
+      image: CentOS7_image
+      flavor: m1.micro
+      key_name: SSH_KEY
+      networks:
+        - port: { get_resource: instance_port }
+      user_data_format: RAW
+      user_data: |
+        #!/bin/bash
+        yum -y install epel-release
+        yum -y install httpd git
+        systemctl enable httpd.service
+        systemctl start httpd.service
+        sed -i "s/enforcing/disabled/g" /etc/selinux/config
+        setenforce 0
+        sudo git clone https://github.com/jang2100/LegacyWEB.git /var/www/html
+        mv /var/www/html/Secure_Check.txt /root/
+        mv /var/www/html/images/logo.PNG /var/www/html/images/logo.png
+        sudo chmod 700 /root/Secure_Check.txt
+        sed -i 144s/Indexes// /etc/httpd/conf/httpd.conf
+        sed -i 144s/FollowSymLinks// /etc/httpd/conf/httpd.conf
+
+        #while [ 1 ] ; do echo $((13**99)) 1>/dev/null 2>&1; done
+
+
+  association:
+    type: OS::Nova::FloatingIPAssociation
+    properties:
+      floating_ip: { get_resource: floating_ip }
+      server_id: { get_resource: server }
+
+outputs:
+  instance_name:
+    description: Web_Server
+    value: { get_attr: [ server, name ] }
+  instance_ip:
+    description: IP address of the instance.
+    value: { get_attr: [ server, first_address ] }
+
+
+
+
+# AutoScaling을 위한 Yaml파일 생성
+
+[root@Controller ~(keystone)]# vi /etc/heat/templates/auto.yaml
+
+
+heat_template_version: 2015-10-15
+
+description: A simple auto scaling group.
+resources:
+  group:
+    type: OS::Heat::AutoScalingGroup
+    properties:
+      cooldown: 60
+      desired_capacity: 2
+      max_size: 3
+      min_size: 1
+      resource:
+        type: OS::Nova::Server::Cirros
+
+  scaleup_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: { get_resource: group }
+      cooldown: 60
+      scaling_adjustment: 1
+
+  cpu_alarm_high:
+    type: OS::Ceilometer::Alarm
+    properties:
+      meter_name: cpu_util
+      statistic: avg
+      period: 60
+      evaluation_periods: 1
+      threshold: 50
+      alarm_actions:
+        - {get_attr: [scaleup_policy, alarm_url]}
+      comparison_operator: gt
+
+
+# Web.Yaml파일을 호출하는 Environment Yaml파일 생성(Auto.yaml 파일에서 resource 함수로 서버를 호출하는 형식이기 때문에 기존 Web.yaml 파일을 호출하는 Environment 파일 생성)
+
+
+[root@Controller ~(keystone)]# vi /etc/heat/templates/Web_Environment.yaml
+
+
+resource_registry:
+    "OS::Nova::Server::Cirros": "Web.yaml"
+
+
+
+# Web_Server를 위한 보안그룹 추가.
+
+[root@Controller ~(keystone)]# openstack security group rule create --protocol tcp --dst-port 80:80 security01
+[root@Controller ~(keystone)]# openstack security group rule create --protocol tcp --dst-port 443:443 security01
+[root@Controller ~(keystone)]# openstack security group rule create --protocol tcp --dst-port 4500:4600 security01
+
+
+# Stack 생성
+[root@Controller ~(keystone)]# openstack stack create -t /etc/heat/templates/auto.yaml -e /etc/heat/templates/Web_Environment.yaml Web_Stack
+
+[centos@Controller ~(keystone)]$ openstack server list
++--------------------------------------+----------------+---------+------------------------------------+---------------+-----------+
+| ID                                   | Name           | Status  | Networks                           | Image         | Flavor    |
++--------------------------------------+----------------+---------+------------------------------------+---------------+-----------+
+| c4870915-e932-4b60-b254-7040a0d6d260 | Web_Server     | ACTIVE  | int_net=10.10.1.65, 192.168.1.243  | CentOS7_image | m1.xsmall |
++--------------------------------------+----------------+---------+------------------------------------+---------------+-----------+
+

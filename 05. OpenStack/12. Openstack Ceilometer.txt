@@ -1,0 +1,377 @@
+------------+---------------------------+---------------------------+------------
+            |                           |                           |
+       ens32|192.168.1.100         ens32|192.168.1.200         ens32|192.168.1.150
++-----------+-----------+   +-----------+-----------+   +-----------+-----------+
+|    [ Control Node ]   |   |    [ Network Node ]   |   |    [ Compute Node ]   |
+|                       |   |                       |   |                       |
+|  MariaDB    RabbitMQ  |   |      Open vSwitch     |   |        Libvirt        |
+|  Memcached  httpd     |   |        L2 Agent       |   |     Nova Compute      |
+|  Keystone   Glance    |   |        L3 Agent       |   |      Open vSwitch     |
+|  Nova API  Cinder API |   |     Metadata Agent    |   |        L2 Agent       |
+|  Neutron Server       |   |     Cinder Volume     |   |  Ceilometer Compute   |
+|  Metadata Agent       |   |        Heat API       |   |                       |
+|  Gnocchi              |   |      Heat Engine      |   |                       |
+|  Ceilometer Central   |   |                       |   |                       |
++-----------------------+   +-----------------------+   +-----------------------+
+
+
+
+[ ### Controller Node ### ]
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password itbank gnocchi
++---------------------+----------------------------------+
+| Field               | Value                            |
++---------------------+----------------------------------+
+| default_project_id  | b0448c18b257446bb0fbd1584db01c92 |
+| domain_id           | default                          |
+| enabled             | True                             |
+| id                  | 81c2ad8a735f40cb9f8d09efe96dc5e9 |
+| name                | gnocchi                          |
+| options             | {}                               |
+| password_expires_at | None                             |
++---------------------+----------------------------------+
+
+[root@Controller ~(keystone)]# openstack role add --project service --user gnocchi admin
+[root@Controller ~(keystone)]# openstack service create --name gnocchi --description "Metric Service" metric
++-------------+----------------------------------+
+| Field       | Value                            |
++-------------+----------------------------------+
+| description | Metric Service                   |
+| enabled     | True                             |
+| id          | bd3824f6383547ff9569c26d5436e18b |
+| name        | gnocchi                          |
+| type        | metric                           |
++-------------+----------------------------------+
+
+[root@Controller ~(keystone)]# export Controller=192.168.1.100
+[root@Controller ~(keystone)]# echo $Controller
+192.168.1.100
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne metric public http://$controller:8041
++--------------+----------------------------------+
+| Field        | Value                            |
++--------------+----------------------------------+
+| enabled      | True                             |
+| id           | 00ef2bd3f9d14b7faebcbc780b53fa8a |
+| interface    | public                           |
+| region       | RegionOne                        |
+| region_id    | RegionOne                        |
+| service_id   | bd3824f6383547ff9569c26d5436e18b |
+| service_name | gnocchi                          |
+| service_type | metric                           |
+| url          | http://192.168.1.100:8041        |
++--------------+----------------------------------+
+
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne metric internal http://$controller:8041
++--------------+----------------------------------+
+| Field        | Value                            |
++--------------+----------------------------------+
+| enabled      | True                             |
+| id           | 8434e6b0ea9345ffabfb4070d2d251e7 |
+| interface    | internal                         |
+| region       | RegionOne                        |
+| region_id    | RegionOne                        |
+| service_id   | bd3824f6383547ff9569c26d5436e18b |
+| service_name | gnocchi                          |
+| service_type | metric                           |
+| url          | http://192.168.1.100:8041        |
++--------------+----------------------------------+
+
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne metric admin http://$controller:8041
++--------------+----------------------------------+
+| Field        | Value                            |
++--------------+----------------------------------+
+| enabled      | True                             |
+| id           | 2386b516580c4630984157d9086fa71d |
+| interface    | admin                            |
+| region       | RegionOne                        |
+| region_id    | RegionOne                        |
+| service_id   | bd3824f6383547ff9569c26d5436e18b |
+| service_name | gnocchi                          |
+| service_type | metric                           |
+| url          | http://192.168.1.100:8041        |
++--------------+----------------------------------+
+
+[root@Controller ~(keystone)]# mysql -u root -p
+Enter password:
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 234
+Server version: 10.3.20-MariaDB MariaDB Server
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> create database gnocchi;
+Query OK, 1 row affected (0.000 sec)
+
+MariaDB [(none)]> grant all privileges on gnocchi.* to gnocchi@'localhost' identified by 'itbank';
+Query OK, 0 rows affected (0.001 sec)
+
+MariaDB [(none)]> grant all privileges on gnocchi.* to gnocchi@'%' identified by 'itbank';
+Query OK, 0 rows affected (0.000 sec)
+
+MariaDB [(none)]> flush privileges;
+Query OK, 0 rows affected (0.000 sec)
+
+MariaDB [(none)]> exit
+Bye
+
+[root@Controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-gnocchi-api openstack-gnocchi-metricd python-gnocchiclient
+[root@Controller ~(keystone)]# cp /etc/gnocchi/gnocchi.conf /backup
+[root@Controller ~(keystone)]# vi /etc/gnocchi/gnocchi.conf
+
+[DEFAULT]
+log_dir = /var/log/gnocchi
+
+[api]
+auth_mode = keystone
+
+[database]
+backend = sqlalchemy
+
+[indexer]
+url = mysql+pymysql://gnocchi:itbank@192.168.1.100/gnocchi
+
+[storage]
+driver = file
+file_basepath = /var/lib/gnocchi
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = gnocchi
+password = itbank
+service_token_roles_required = true
+
+[root@Controller ~(keystone)]# vi /etc/httpd/conf.d/10-gnocchi_wsgi.conf
+Listen 8041
+<VirtualHost *:8041>
+  <Directory /usr/bin>
+    AllowOverride None
+    Require all granted
+  </Directory>
+
+  CustomLog /var/log/httpd/gnocchi_wsgi_access.log combined
+  ErrorLog /var/log/httpd/gnocchi_wsgi_error.log
+  SetEnvIf X-Forwarded-Proto https HTTPS=1
+  WSGIApplicationGroup %{GLOBAL}
+  WSGIDaemonProcess gnocchi display-name=gnocchi_wsgi user=gnocchi group=gnocchi processes=6 threads=6
+  WSGIProcessGroup gnocchi
+  WSGIScriptAlias / /usr/bin/gnocchi-api
+</VirtualHost>
+
+[root@Controller ~(keystone)]# su -s /bin/bash gnocchi -c "gnocchi-upgrade"
+[root@Controller ~(keystone)]# systemctl start openstack-gnocchi-metricd
+[root@Controller ~(keystone)]# systemctl enable openstack-gnocchi-metricd
+[root@Controller ~(keystone)]# systemctl restart httpd
+
+[root@Controller ~(keystone)]# export OS_AUTH_TYPE=password >> ~/keystonerc
+[root@Controller ~(keystone)]# source keystonerc
+
+[root@Controller ~(keystone)]# semanage port -a -t http_port_t -p tcp 8041
+- Selinux 활성화시 작업
+
+[root@Controller ~(keystone)]# firewall-cmd --add-port=8041/tcp --permanent
+[root@Controller ~(keystone)]# firewall-cmd --reload
+
+[root@Controller ~(keystone)]# gnocchi resource list
+
+- Gnocchi 설치 작업 완료
+
+
+
+
+
+
+[ ### Controller Node ### ]
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password itbank ceilometer
++---------------------+----------------------------------+
+| Field               | Value                            |
++---------------------+----------------------------------+
+| default_project_id  | b0448c18b257446bb0fbd1584db01c92 |
+| domain_id           | default                          |
+| enabled             | True                             |
+| id                  | f08ad39cfca2494aa8b30dd23abac510 |
+| name                | ceilometer                       |
+| options             | {}                               |
+| password_expires_at | None                             |
++---------------------+----------------------------------+
+
+[root@Controller ~(keystone)]# openstack role add --project service --user ceilometer admin
+[root@Controller ~(keystone)]# openstack service create --name ceilometer --description "OpenStack Telemetry Service" metering
++-------------+----------------------------------+
+| Field       | Value                            |
++-------------+----------------------------------+
+| description | OpenStack Telemetry Service      |
+| enabled     | True                             |
+| id          | 9509d4b3715a4e8abbb526154c3fa6ef |
+| name        | ceilometer                       |
+| type        | metering                         |
++-------------+----------------------------------+
+
+[root@Controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-ceilometer-central openstack-ceilometer-notification python-ceilometerclient
+[root@Controller ~(keystone)]# cp /etc/ceilometer/ceilometer.conf /backup
+[root@Controller ~(keystone)]# vi /etc/ceilometer/ceilometer.conf
+
+[DEFAULT]
+transport_url = rabbit://openstack:password@192.168.1.100
+
+[api]
+auth_mode = keystone
+
+[dispatcher_gnocchi]
+filter_service_activity = False
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = gnocchi
+password = itbank
+
+[service_credentials]
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = ceilometer
+password = itbank
+
+[root@Controller ~(keystone)]# su -s /bin/bash ceilometer -c "ceilometer-upgrade --skip-metering-database"
+[root@Controller ~(keystone)]# systemctl start openstack-ceilometer-central openstack-ceilometer-notification
+[root@Controller ~(keystone)]# systemctl enable openstack-ceilometer-central openstack-ceilometer-notification
+
+- Controller Node Ceilometer 작업 완료
+
+
+
+
+
+[ ### Compute Node ### ]
+[root@Compute ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-ceilometer-compute
+[root@Compute ~]# cp /etc/ceilometer/ceilometer.conf /backup
+
+[root@Compute ~]# vi /etc/ceilometer/ceilometer.conf
+[DEFAULT]
+transport_url = rabbit://openstack:password@192.168.100
+
+[service_credentials]
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = ceilometer
+password = itbank
+
+[root@Compute ~]# systemctl start openstack-ceilometer-compute
+[root@Compute ~]# systemctl enable openstack-ceilometer-compute
+
+[root@Compute ~]# vi /etc/nova/nova.conf
+instance_usage_audit = True
+instance_usage_audit_period = hour
+notify_on_state_change = vm_and_task_state
+# Default 영역에 추가
+
+[oslo_messaging_notifications]
+driver = messagingv2
+
+- Ceilometer 정보수집을 위한 Compute Node 작업 완료
+
+
+
+
+
+[ ### Controller Node (CentOS 계정으로 로그인 후 작업) ### ]
+[centos@Controller ~(keystone)]$ Int_Net_ID=$(openstack network list | grep int_net | awk '{ print $2 }')
+[centos@Controller ~(keystone)]$ openstack image list
++--------------------------------------+---------------------+--------+
+| ID                                   | Name                | Status |
++--------------------------------------+---------------------+--------+
+| 42839f07-e940-4514-8019-f60dbba6c694 | CentOS7_image       | active |
+| a14eb5d8-87e6-4fbf-b18a-159af77aa871 | Snap_Cloud_CentOS_7 | active |
++--------------------------------------+---------------------+--------+
+
+
+[centos@Controller ~(keystone)]$ openstack server create --flavor m1.small --image CentOS7_image --security-group security01 --nic net-id=$Int_Net_ID --key-name SSH_KEY Cloud_CentOS_7
++-----------------------------+------------------------------------------------------+
+| Field                       | Value                                                |
++-----------------------------+------------------------------------------------------+
+| OS-DCF:diskConfig           | MANUAL                                               |
+| OS-EXT-AZ:availability_zone |                                                      |
+| OS-EXT-STS:power_state      | NOSTATE                                              |
+| OS-EXT-STS:task_state       | scheduling                                           |
+| OS-EXT-STS:vm_state         | building                                             |
+| OS-SRV-USG:launched_at      | None                                                 |
+| OS-SRV-USG:terminated_at    | None                                                 |
+| accessIPv4                  |                                                      |
+| accessIPv6                  |                                                      |
+| addresses                   |                                                      |
+| adminPass                   | 3xdRevZWiD86                                         |
+| config_drive                |                                                      |
+| created                     | 2020-06-03T09:02:21Z                                 |
+| flavor                      | m1.small (0)                                         |
+| hostId                      |                                                      |
+| id                          | 0f7280bb-94ef-448c-a26e-9b00150d9ea6                 |
+| image                       | CentOS7_image (42839f07-e940-4514-8019-f60dbba6c694) |
+| key_name                    | SSH_KEY                                              |
+| name                        | Cloud_CentOS_7                                       |
+| progress                    | 0                                                    |
+| project_id                  | 35b0fb30aba94f0db2401e54e58ba2c6                     |
+| properties                  |                                                      |
+| security_groups             | name='969d3ae3-029e-438a-93c6-bf0ef0d81df1'          |
+| status                      | BUILD                                                |
+| updated                     | 2020-06-03T09:02:21Z                                 |
+| user_id                     | 9f6085fc3d234df586d862a0ccf5d80a                     |
+| volumes_attached            |                                                      |
++-----------------------------+------------------------------------------------------+
+
+
+[centos@Controller ~(keystone)]$ openstack metric resource list
++--------------------------------------+----------+----------------------------------+----------------------------------+--------------------------------------+----------------------------------+----------+----------------------------------+--------------+-------------------------------------------------------------------+
+| id                                   | type     | project_id                       | user_id                          | original_resource_id                 | started_at                       | ended_at | revision_start                   | revision_end | creator                                                           |
++--------------------------------------+----------+----------------------------------+----------------------------------+--------------------------------------+----------------------------------+----------+----------------------------------+--------------+-------------------------------------------------------------------+
+| dfca0533-94d5-4ecd-b840-bf14fd95b0e4 | instance | 35b0fb30aba94f0db2401e54e58ba2c6 | 9f6085fc3d234df586d862a0ccf5d80a | dfca0533-94d5-4ecd-b840-bf14fd95b0e4 | 2020-06-03T09:01:45.789586+00:00 | None     | 2020-06-03T09:01:45.789606+00:00 | None         | 53ccc8e6d1934c82bde6c69d8c49a0d1:b0448c18b257446bb0fbd1584db01c92 |
+| 0f7280bb-94ef-448c-a26e-9b00150d9ea6 | instance | 35b0fb30aba94f0db2401e54e58ba2c6 | 9f6085fc3d234df586d862a0ccf5d80a | 0f7280bb-94ef-448c-a26e-9b00150d9ea6 | 2020-06-03T09:02:28.478507+00:00 | None     | 2020-06-03T09:02:28.706136+00:00 | None         | 53ccc8e6d1934c82bde6c69d8c49a0d1:b0448c18b257446bb0fbd1584db01c92 |
++--------------------------------------+----------+----------------------------------+----------------------------------+--------------------------------------+----------------------------------+----------+----------------------------------+--------------+-------------------------------------------------------------------+
+
+
+[centos@Controller ~(keystone)]$ openstack metric resource show 0f7280bb-94ef-448c-a26e-9b00150d9ea6
++-----------------------+---------------------------------------------------------------------+
+| Field                 | Value                                                               |
++-----------------------+---------------------------------------------------------------------+
+| created_by_project_id | b0448c18b257446bb0fbd1584db01c92                                    |
+| created_by_user_id    | 53ccc8e6d1934c82bde6c69d8c49a0d1                                    |
+| creator               | 53ccc8e6d1934c82bde6c69d8c49a0d1:b0448c18b257446bb0fbd1584db01c92   |
+| ended_at              | None                                                                |
+| id                    | 0f7280bb-94ef-448c-a26e-9b00150d9ea6                                |
+| metrics               | compute.instance.booting.time: 8bc995a6-766b-475f-b2be-b8b6eee6247a |
+|                       | disk.ephemeral.size: d6af06d3-3f4c-40c6-8960-1f8c2c986981           |
+|                       | disk.root.size: e5f05b53-9b23-4f30-8255-5300915675f5                |
+|                       | memory: 93dec6ce-0ed2-45de-aa13-f3c23144fb6f                        |
+|                       | vcpus: 401a5fde-0ea6-4c0f-9272-cf54ca52bb28                         |
+| original_resource_id  | 0f7280bb-94ef-448c-a26e-9b00150d9ea6                                |
+| project_id            | 35b0fb30aba94f0db2401e54e58ba2c6                                    |
+| revision_end          | None                                                                |
+| revision_start        | 2020-06-03T09:02:28.706136+00:00                                    |
+| started_at            | 2020-06-03T09:02:28.478507+00:00                                    |
+| type                  | instance                                                            |
+| user_id               | 9f6085fc3d234df586d862a0ccf5d80a                                    |
++-----------------------+---------------------------------------------------------------------+
+
+- CentOS 계정으로 로그인 후 새로운 인스턴스 생성 
+- 수집 된 Ceilometer 정보를 확인 할 수 있다.

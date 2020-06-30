@@ -1,0 +1,187 @@
+------------+-----------------------------+------------ 
+            |                             |
+       ens32|192.168.1.100           ens32|192.168.1.150 
++-----------+-----------+     +-----------+-----------+
+|  [ Controller Node ]  |     |    [ Compute Node ]   |
+|                       |     |                       |
+|  MariaDB    RabbitMQ  |     |        Libvirt        |
+|  Memcached  httpd     |     |      Nova Compute     |
+|  Keystone   Glance    |     |                       |
+|  Nova API             |     |                       |
++-----------------------+     +-----------------------+
+
+# Compute Node에서 작업
+
+[root@Compute ~]# yum -y install qemu-kvm libvirt virt-install bridge-utils
+[root@Compute ~]# lsmod | grep kvm
+
+kvm_intel             188688  0
+kvm                   636965  1 kvm_intel
+irqbypass              13503  1 kvm
+
+
+# 가상화 작업을 위한 패키지 설치 및 서비스 시작
+[root@Compute ~]# systemctl start libvirtd
+[root@Compute ~]# systemctl enable libvirtd
+
+
+[root@Compute ~]# virsh net-list --all
+
+ 이름               상태     자동 시작 Persistent
+----------------------------------------------------------
+ default          활성화       예        예
+
+
+# default 네트워크 강제 종료
+[root@Compute ~]# virsh net-destroy default
+
+
+# default 네트워크가 정의되지 않음
+[root@Compute ~]# virsh net-undefine default
+
+
+
+# virbr0 인터페이스 비활성화 확인
+[root@Compute ~]# virsh net-list --all
+ 이름               상태     자동 시작 Persistent
+----------------------------------------------------------
+
+
+# 가상화 작업에서 사용 할 Bridge Interface 생성 및 물리 Interface와 Mapping 작업을 진행
+[root@Compute ~]# ifconfig virbr0
+virbr0: error fetching interface information: Device not found
+
+
+[root@Compute ~]# cp /etc/sysconfig/network-scripts/ifcfg-ens33 /etc/sysconfig/network-scripts/ifcfg-br0
+[root@Compute ~]# vi /etc/sysconfig/network-scripts/ifcfg-ens33
+NAME=ens33
+UUID=ba47e40d-a1b4-418c-b965-b43af1e75c6c
+DEVICE=ens33
+ONBOOT=yes
+BRIDGE=br0
+
+[root@Compute ~]# vi /etc/sysconfig/network-scripts/ifcfg-br0
+TYPE=Bridge
+BOOTPROTO=none
+NAME=br0
+DEVICE=br0
+ONBOOT=yes
+GATEWAY=192.168.1.2
+DNS1=168.126.63.1
+
+
+[root@Compute ~]# systemctl restart network libvirtd
+
+
+# Bridge 인터페이스 확인
+[root@Compute ~]# ifconfig br0
+br0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet6 fe80::20c:29ff:fe75:201f  prefixlen 64  scopeid 0x20<link>
+        ether 00:0c:29:75:20:1f  txqueuelen 1000  (Ethernet)
+        RX packets 4  bytes 204 (204.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 6  bytes 516 (516.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+
+# Nova-Compute 패키지 설치
+[root@Compute ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-nova-compute
+
+
+# Nova 설정파일 수정
+[root@Compute ~]# vi /etc/nova/nova.conf
+
+[DEFAULT]
+my_ip = 192.168.1.150
+state_path = /var/lib/nova
+enabled_apis = osapi_compute,metadata
+log_dir = /var/log/nova
+transport_url = rabbit://openstack:password@192.168.1.100
+compute_driver = libvirt.LibvirtDriver
+
+
+[libvirt]
+virt_type=kvm
+cpu_mode=host-passthrough
+hw_machine_type = x86_64=pc-i440fx-rhel7.2.0
+
+[api]
+auth_strategy = keystone
+
+[vnc]
+enabled = True
+server_listen = 0.0.0.0
+server_proxyclient_address = $my_ip
+novncproxy_base_url = http://192.168.1.100:6080/vnc_auto.html 
+
+[glance]
+api_servers = http://192.168.1.100:9292
+
+[oslo_concurrency]
+lock_path = $state_path/tmp
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = nova
+password = 1
+
+[placement]
+auth_url = http://192.168.1.100:5000
+os_region_name = RegionOne
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = placement
+password = 1
+
+[wsgi]
+api_paste_config = /etc/nova/api-paste.ini
+
+
+
+# VNC에서 사용 할 Port 방화벽설정
+[root@Compute ~]# firewall-cmd --add-port=5900-5999/tcp --permanent
+[root@Compute ~]# firewall-cmd --reload
+
+
+
+# nova-compute 서비스 시작 및 자동시작 등록
+[root@Compute ~]# systemctl start openstack-nova-compute
+[root@Compute ~]# systemctl enable openstack-nova-compute
+[root@Compute ~]# reboot
+
+
+
+
+
+# Controller Node에서 작업
+# Nova 관련 테이블 생성
+[root@Controller ~(keystone)]# su -s /bin/bash nova -c "nova-manage cell_v2 discover_hosts"
+
+
+# nova-compute Service가 현재 Compute Node에서 활성화되어있는 것을 확인
+[root@Controller ~(keystone)]# openstack compute service list
++----+----------------+------------+----------+---------+-------+----------------------------+
+| ID | Binary         | Host       | Zone     | Status  | State | Updated At                 |
++----+----------------+------------+----------+---------+-------+----------------------------+
+|  3 | nova-console   | Controller | internal | enabled | up    | 2020-05-20T04:45:42.000000 |
+|  4 | nova-conductor | Controller | internal | enabled | up    | 2020-05-20T04:45:41.000000 |
+|  5 | nova-scheduler | Controller | internal | enabled | up    | 2020-05-20T04:45:44.000000 |
+|  9 | nova-compute   | Compute    | nova     | enabled | up    | 2020-05-20T04:45:40.000000 |
++----+----------------+------------+----------+---------+-------+----------------------------+
+
+
+# Hypervisor를 지원하는 목록에서 Compute Node가 검색되는 것을 확인
+[root@Controller ~(keystone)]# openstack hypervisor list
++----+---------------------+-----------------+---------------+-------+
+| ID | Hypervisor Hostname | Hypervisor Type | Host IP       | State |
++----+---------------------+-----------------+---------------+-------+
+|  1 | Compute             | QEMU            | 192.168.1.150 | up    |
++----+---------------------+-----------------+---------------+-------+

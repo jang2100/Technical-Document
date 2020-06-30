@@ -1,0 +1,412 @@
++-----------+-----------+
+            |                
+       ens32|192.168.1.100   
++-----------+-----------+    
+|    [ Control Node ]   |
+|  [ Swift Proxy Node ] |  
+|                       |  
+| MariaDB    RabbitMQ   |
+| Memcached  httpd      |    
+| Keystone  Swift Proxy |
++-----------+-----------+ 
+            |                 
+            +--------------------------+
+       ens32|192.168.1.150        ens32|192.168.1.200    
++-----------+--------------+  +-----------+-----------+
+|    [ Compute Node ]      |  |    [ Network Node ]   |
+|   [ Storage Node#1 ]     |  |   [ Storage Node#2 ]  |
+|        Libvirt           |  | DHCP Agent NFS_Client |              
+|     Nova Compute         |  |	    Open vSwitch      |
+|     Open vSwitch	   |  |	      L2 Agent	      |
+|        L2 Agent	   |  |	      L3 Agent	      |
+|      NFS_Client	   |  |	    Metadata Agent    |
+|      Swift-Account       |  |	     iSCSI-target     |
+|      Swift-Container	   |  |	    Cinder Volume     |
+|      Swift-Object        |  |     Swift-Account     |
++--------------------------+  |     Swift-Container   |  
+			      |     Swift-Object      |
+			      +-----------------------+
+
+- Storage Node #1, Storage Node #2에서 HDD 10GB 1개씩 추가 후 작업을 진행
+
+
+[ ### Controller(Swift Proxy) Node 설정 ### ]
+
+# Swift Service를 관리할 사용자 생성 및 관리권한을 부여
+[root@controller ~(keystone)]# openstack user create --domain default --project service --password 1 swift
+
+[root@controller ~(keystone)]# openstack role add --project service --user swift admin
+
+# Swift Service 등록
+[root@controller ~(keystone)]# openstack service create --name swift --description "OpenStack Object Storage" object-store
+
+
+[root@Controller ~(keystone)]# export controller=192.168.1.100
+[root@Controller ~(keystone)]# echo $controller
+192.168.1.100
+
+
+# Swift Service 사용을 위한 EndPoint 생성
+[root@controller ~(keystone)]# openstack endpoint create --region RegionOne object-store public http://$controller:8080/v1/AUTH_%\(tenant_id\)s
+[root@controller ~(keystone)]# openstack endpoint create --region RegionOne object-store internal http://$controller:8080/v1/AUTH_%\(tenant_id\)s
+[root@controller ~(keystone)]# openstack endpoint create --region RegionOne object-store admin http://$controller:8080/v1/AUTH_%\(tenant_id\)s  
+
+# Swift Proxy 패키지 설치
+[root@controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-swift-proxy python-memcached openssh-clients
+
+
+
+# 설정 파일 수정
+[root@controller ~(keystone)]# vi /etc/swift/proxy-server.conf
+
+42 memcache_servers = 192.168.1.100:11211
+
+
+[filter:authtoken]
+paste.filter_factory = keystonemiddleware.auth_token:filter_factory
+#project_name = %SERVICE_TENANT_NAME%
+#username = %SERVICE_USER%
+#password = %SERVICE_PASSWORD%
+#auth_host = 127.0.0.1
+#auth_port = 35357
+#auth_protocol = http
+#signing_dir = /tmp/keystone-signing-swift
+
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = swift
+password = 1
+delay_auth_decision = true
+
+
+[root@controller ~(keystone)]# vi /etc/swift/swift.conf
+[swift-hash]
+swift_hash_path_suffix = swift_shared_path
+swift_hash_path_prefix = swift_shared_path
+
+
+# swift-ring-builder 명령어로 account, container, object builder 파일생성
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/account.builder create 12 2 1
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/container.builder create 12 2 1
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/object.builder create 12 2 1
+
+
+
+# swift-ring-builder를 사용하여 Storage Node #1의 장치를 account, container, object builder 파일에 추가
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/account.builder add r0z0-192.168.1.150:6202/device 100
+Device d0r0z0-192.168.1.150:6202R192.168.1.150:6202/device_"" with 100.0 weight got id 0
+
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/container.builder add r0z0-192.168.1.150:6201/device 100
+Device d0r0z0-192.168.1.150:6201R192.168.1.150:6201/device_"" with 100.0 weight got id 0
+
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/object.builder add r0z0-192.168.1.150:6200/device 100
+Device d0r0z0-192.168.1.150:6200R192.168.1.150:6200/device_"" with 100.0 weight got id 0
+
+
+# swift-ring-builder를 사용하여 Storage Node #2의 장치를 account, container, object builder 파일에 추가
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/account.builder add r1z1-192.168.1.200:6202/device 100
+Device d1r1z1-192.168.1.200:6202R192.168.1.250:6202/device_"" with 100.0 weight got id 1
+
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/container.builder add r1z1-192.168.1.200:6201/device 100
+Device d1r1z1-192.168.1.200:6201R192.168.1.250:6201/device_"" with 100.0 weight got id 1
+
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/object.builder add r1z1-192.168.1.200:6200/device 100
+Device d1r1z1-192.168.1.200:6200R192.168.1.250:6200/device_"" with 100.0 weight got id 1
+
+
+# Ring 파일의 변경사항을 업데이트, Ring 파일 재조정 작업
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/account.builder rebalance
+Reassigned 8192 (200.00%) partitions. Balance is now 0.00.  Dispersion is now 0.00
+
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/container.builder rebalance
+Reassigned 8192 (200.00%) partitions. Balance is now 0.00.  Dispersion is now 0.00
+
+[root@controller ~(keystone)]# swift-ring-builder /etc/swift/object.builder rebalance
+Reassigned 8192 (200.00%) partitions. Balance is now 0.00.  Dispersion is now 0.00
+
+
+# Ring 파일의 소유권 변경
+[root@controller ~(keystone)]# chown swift. /etc/swift/*.gz
+
+
+
+# Controller Node에서 SCP 이용하여 ring 파일을 각 Storage Node로 전송
+
+[root@controller ~(keystone)]# scp /etc/swift/*.gz 192.168.1.150:/etc/swift/
+
+[root@controller ~(keystone)]# scp /etc/swift/*.gz 192.168.1.200:/etc/swift/
+
+
+
+# Proxy Server 방화벽설정 및 서비스 시작, 자동 시작 등록
+[root@controller ~(keystone)]# firewall-cmd --add-port=8080/tcp --permanent
+[root@controller ~(keystone)]# firewall-cmd --reload
+
+[root@controller ~(keystone)]# systemctl start openstack-swift-proxy
+[root@controller ~(keystone)]# systemctl enable openstack-swift-proxy
+
+
+
+
+[ ### Compute(Swift Storage #1) Node 설정 ### ]
+
+
+# Swfit 서비스를 사용하기 위한 패키지 설치
+[root@compute ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-swift-account openstack-swift-container \
+> openstack-swift-object xfsprogs rsync openssh-clients
+
+# Ring 파일의 소유권 변경
+[root@compute ~]# chown swift. /etc/swift/*.gz
+
+
+[root@Compute ~]# fdisk -l /dev/sdb
+Disk /dev/sdb: 10.7 GB, 10737418240 bytes, 20971520 sectors
+Units = sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+
+
+# 디스크 포맷
+[root@compute ~]# mkfs.xfs /dev/sdb
+
+# 디바이스 기본경로 생성 및 마운트
+[root@compute ~]# mkdir -p /srv/node/device
+[root@compute ~]# mount -o noatime,nodiratime,nobarrier /dev/sdb /srv/node/device
+
+# 디렉토리 소유권 변경
+[root@compute ~]# chown -R swift. /srv/node
+
+# 설정 파일 수정
+[root@compute ~]# vi /etc/fstab
+/dev/sdb               /srv/node/device       xfs     noatime,nodiratime,nobarrier 0 0
+
+
+
+[root@compute ~]# vi /etc/swift/swift.conf
+
+[swift-hash]
+swift_hash_path_suffix = swift_shared_path
+swift_hash_path_prefix = swift_shared_path
+
+
+
+[root@compute ~]# vi /etc/swift/account-server.conf
+6 bind_ip = 0.0.0.0
+
+
+[root@compute ~]# vi /etc/swift/container-server.conf
+6 bind_ip = 0.0.0.0
+
+
+[root@compute ~]# vi /etc/swift/object-server.conf
+6 bind_ip = 0.0.0.0
+
+
+
+[root@compute ~]# vi /etc/rsyncd.conf
+pid file = /var/run/rsyncd.pid
+log file = /var/log/rsyncd.log
+uid = swift
+gid = swift
+address = 192.168.1.150
+
+[account]
+path            = /srv/node
+read only       = false
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 25
+lock file =     /var/lock/account.lock
+
+[container]
+path            = /srv/node
+read only       = false
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 25
+lock file =     /var/lock/container.lock
+
+
+[object]
+path            = /srv/node
+read only       = false
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 25
+lock file =     /var/lock/object.lock
+
+
+[swift_server]
+path            = /etc/swift
+read only       = true
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 5
+lock file =     /var/lock/swift_server.lock
+
+
+# Swift 각 서버들에 대한 방화벽설정 및 서비스 시작, 자동시작 등록
+[root@compute ~]# firewall-cmd --add-port={873/tcp,6200/tcp,6201/tcp,6202/tcp} --permanent
+[root@compute ~]# firewall-cmd --reload
+
+[root@compute ~]# systemctl restart rsyncd \
+openstack-swift-account-auditor \
+openstack-swift-account-replicator \
+openstack-swift-account \
+openstack-swift-container-auditor \
+openstack-swift-container-replicator \
+openstack-swift-container-updater \
+openstack-swift-container \
+openstack-swift-object-auditor \
+openstack-swift-object-replicator \
+openstack-swift-object-updater \
+openstack-swift-object
+
+[root@compute ~]# systemctl enable rsyncd \
+openstack-swift-account-auditor \
+openstack-swift-account-replicator \
+openstack-swift-account \
+openstack-swift-container-auditor \
+openstack-swift-container-replicator \
+openstack-swift-container-updater \
+openstack-swift-container \
+openstack-swift-object-auditor \
+openstack-swift-object-replicator \
+openstack-swift-object-updater \
+openstack-swift-object
+
+
+
+[ ### Network(Swift Storage #2) Node 설정 ### ]
+
+
+# Swfit 서비스를 사용하기 위한 패키지 설치
+[root@Network ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-swift-account openstack-swift-container \
+> openstack-swift-object xfsprogs rsync openssh-clients
+
+# Ring 파일의 소유권 변경
+[root@Network ~]# chown swift. /etc/swift/*.gz
+
+
+# 디스크 포맷
+[root@Network ~]# mkfs.xfs /dev/sdb
+
+
+# 디바이스 기본경로 생성 및 마운트
+[root@Network ~]# mkdir -p /srv/node/device
+[root@Network ~]# mount -o noatime,nodiratime,nobarrier /dev/sdb /srv/node/device
+
+# 디렉토리 소유권 변경
+[root@Network ~]# chown -R swift. /srv/node
+
+# 설정 파일 수정
+[root@Network ~]# vi /etc/fstab
+/dev/sdb               /srv/node/device       xfs     noatime,nodiratime,nobarrier 0 0
+
+[root@Network ~]# vi /etc/swift/swift.conf
+
+[swift-hash]
+swift_hash_path_suffix = swift_shared_path
+swift_hash_path_prefix = swift_shared_path
+
+
+[root@Network ~]# vi /etc/swift/account-server.conf
+6 bind_ip = 0.0.0.0
+
+[root@Network ~]# vi /etc/swift/container-server.conf
+6 bind_ip = 0.0.0.0
+
+[root@Network ~]# vi /etc/swift/object-server.conf
+6 bind_ip = 0.0.0.0
+
+
+[root@Network ~]# vi /etc/rsyncd.conf
+pid file = /var/run/rsyncd.pid
+log file = /var/log/rsyncd.log
+uid = swift
+gid = swift
+address = 192.168.1.200
+
+[account]
+path            = /srv/node
+read only       = false
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 25
+lock file =     /var/lock/account.lock
+
+[container]
+path            = /srv/node
+read only       = false
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 25
+lock file =     /var/lock/container.lock
+
+[object]
+path            = /srv/node
+read only       = false
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 25
+lock file =     /var/lock/object.lock
+
+[swift_server]
+path            = /etc/swift
+read only       = true
+write only      = no
+list            = yes
+incoming chmod  = 0644
+outgoing chmod  = 0644
+max connections = 5
+lock file =     /var/lock/swift_server.lock
+
+# Swift 각 서버들에 대한 방화벽설정 및 서비스 시작, 자동시작 등록
+[root@Network ~]# firewall-cmd --add-port={873/tcp,6200/tcp,6201/tcp,6202/tcp} --permanent
+[root@Network ~]# firewall-cmd --reload
+
+[root@Network ~]# systemctl restart rsyncd \
+openstack-swift-account-auditor \
+openstack-swift-account-replicator \
+openstack-swift-account \
+openstack-swift-container-auditor \
+openstack-swift-container-replicator \
+openstack-swift-container-updater \
+openstack-swift-container \
+openstack-swift-object-auditor \
+openstack-swift-object-replicator \
+openstack-swift-object-updater \
+openstack-swift-object
+
+[root@Network ~]# systemctl enable rsyncd \
+openstack-swift-account-auditor \
+openstack-swift-account-replicator \
+openstack-swift-account \
+openstack-swift-container-auditor \
+openstack-swift-container-replicator \
+openstack-swift-container-updater \
+openstack-swift-container \
+openstack-swift-object-auditor \
+openstack-swift-object-replicator \
+openstack-swift-object-updater \
+openstack-swift-object
+

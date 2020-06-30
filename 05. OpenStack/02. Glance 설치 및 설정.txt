@@ -1,0 +1,143 @@
+   ens32|192.168.1.100  
++-----------+-----------+
+| [ Controller Node ]   |
+|                       |
+|  MariaDB    RabbitMQ  |
+|  Memcached  httpd     |
+|  Keystone   Glance    |
++-----------------------+
+
+# Glance Service를 관리할 사용자 생성 및 패스워드 지정
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 glance            
+
+
+
+# 위에서 생성 한 glance 사용자에게 관리권한을 부여
+[root@Controller ~(keystone)]# openstack role add --project service --user glance admin
+
+
+# Glance Service 등록 ( 이름: glance, 설명: OpenStack Image service, 타입: Image )
+[root@Controller ~(keystone)]# openstack service create --name glance --description "OpenStack Image service" image
+
+
+
+# Glance Service 사용을 위한 EndPoint 생성
+[root@Controller ~(keystone)]# export controller=192.168.1.100
+[root@Controller ~(keystone)]# echo $controller
+192.168.1.100
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne image public http://$controller:9292
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne image internal http://$controller:9292
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne image admin http://$controller:9292
+
+
+# glance 사용자 생성 확인
+[root@Controller ~(keystone)]# openstack user list
++----------------------------------+--------+
+| ID                               | Name   |
++----------------------------------+--------+
+| ef5c600273ea4857b8dc4dcb73714e44 | admin  |
+| 9e3d299f676a4c7b8dbf54076bd15348 | glance |
++----------------------------------+--------+
+
+
+# glance Service 생성 확인
+[root@Controller ~(keystone)]# openstack service list
++----------------------------------+----------+----------+
+| ID                               | Name     | Type     |
++----------------------------------+----------+----------+
+| 514d2d6eddbf4b9cb35e34337b3e3936 | glance   | image    |
+| dc04f6550ec04653a852e8305ea9352f | keystone | identity |
++----------------------------------+----------+----------+
+
+
+# glance Service EndPoint 생성 확인
+[root@Controller ~(keystone)]# openstack endpoint list
++----------------------------------+-----------+--------------+--------------+---------+-----------+-------------------------------+
+| ID                               | Region    | Service Name | Service Type | Enabled | Interface | URL                           |
++----------------------------------+-----------+--------------+--------------+---------+-----------+-------------------------------+
+| 4954b867ddff48cd8a2643b2a36cb299 | RegionOne | glance       | image        | True    | admin     | http://192.168.1.100:9292     |
+| 63f4d682ca8846d0847ed36dd5450f25 | RegionOne | keystone     | identity     | True    | internal  | http://192.168.1.100:5000/v3/ |
+| 85b574f5eeb74560a3b3f644364aca3b | RegionOne | glance       | image        | True    | internal  | http://192.168.1.100:9292     |
+| 89a963c942f64dfd8bc2e85ba25756e3 | RegionOne | glance       | image        | True    | public    | http://192.168.1.100:9292     |
+| 9296efe3199540b38bea79767a684990 | RegionOne | keystone     | identity     | True    | public    | http://192.168.1.100:5000/v3/ |
+| b9a53fda66254259a6576403c874bb9b | RegionOne | keystone     | identity     | True    | admin     | http://192.168.1.100:5000/v3/ |
++----------------------------------+-----------+--------------+--------------+---------+-----------+-------------------------------+
+
+
+
+# Openstack Glance Service에서 사용 할 데이터베이스 및 사용자 생성 후 권한할당 진행
+[root@Controller ~(keystone)]# mysql -u root -p
+
+MariaDB [(none)]> create database glance;
+MariaDB [(none)]> grant all privileges on glance.* to glance@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on glance.* to glance@'%' identified by '1';
+MariaDB [(none)]> flush privileges;
+MariaDB [(none)]> exit
+
+
+# Glance 패키지 설치
+[root@Controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-glance
+
+
+# Glance api 설정 파일 수정
+# 기존 내용 전부 삭제 후 새로 작성
+[root@Controller ~(keystone)]# vi /etc/glance/glance-api.conf
+
+[DEFAULT]
+bind_host = 0.0.0.0
+
+
+[glance_store]
+stores = file,http
+default_store = file
+filesystem_store_datadir = /var/lib/glance/images/
+
+[database]
+connection = mysql+pymysql://glance:1@192.168.1.100/glance
+# Glance Service를 위한 DB연결정보 정의
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = glance
+password = 1
+
+[paste_deploy]
+flavor = keystone
+
+
+
+
+
+# Glance Service Table 생성 
+[root@Controller ~(keystone)]# su -s /bin/bash glance -c "glance-manage db_sync"
+
+
+
+# Glance Service 시작 및 자동시작 등록
+[root@Controller ~(keystone)]# systemctl start openstack-glance-api
+[root@Controller ~(keystone)]# systemctl enable openstack-glance-api
+
+
+
+
+# Glance 방화벽 설정
+[root@Controller ~(keystone)]# firewall-cmd --add-port=9292/tcp --permanent
+[root@Controller ~(keystone)]# firewall-cmd --reload
+
+
+
+# Glance Listen 상태 확인
+[root@Controller ~(keystone)]# lsof -i tcp:9292
+COMMAND    PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+glance-ap 1044 glance    4u  IPv4  24710      0t0  TCP *:armtechdaemon (LISTEN)
+glance-ap 1945 glance    4u  IPv4  24710      0t0  TCP *:armtechdaemon (LISTEN)
+glance-ap 1946 glance    4u  IPv4  24710      0t0  TCP *:armtechdaemon (LISTEN)
+glance-ap 1947 glance    4u  IPv4  24710      0t0  TCP *:armtechdaemon (LISTEN)
+glance-ap 1948 glance    4u  IPv4  24710      0t0  TCP *:armtechdaemon (LISTEN)

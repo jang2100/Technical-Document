@@ -1,0 +1,155 @@
+# 패키지 설치
+[root@Controller ~(keystone)]# yum -y install epel-release
+[root@Controller ~(keystone)]# yum -y install nagios nagios-plugins-all
+[root@Controller ~(keystone)]# yum -y install nagios-plugins-nrpe
+
+# Nagios 사용자 비밀번호 변경
+[root@Controller ~(keystone)]# htpasswd -c /etc/nagios/passwd nagiosadmin
+
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/httpd/conf.d/nagios.conf
+16          Require all granted
+17 #        Require host 127.0.0.1
+18          Require ip 127.0.0.1 192.168.1.0/24
+
+
+47          Require all granted
+48 #        Require host 127.0.0.1
+49          Require ip 127.0.0.1 192.168.1.0/24
+
+
+
+
+
+
+# 설정 파일 수정
+[root@Compute ~]# vi /etc/nagios/nagios.cfg
+51 cfg_dir=/etc/nagios/servers
+
+[root@Controller ~(keystone)]# mkdir /etc/nagios/servers
+[root@Controller ~(keystone)]# chgrp nagios /etc/nagios/servers
+[root@Controller ~(keystone)]# chmod 750 /etc/nagios/servers
+
+
+# 설정 파일 맨 밑에 추가
+[root@Controller ~(keystone)]# vi /etc/nagios/objects/commands.cfg
+
+define command{
+        command_name    check_nrpe
+        command_line    $USER1$/check_nrpe -H $HOSTADDRESS$ -c $ARG1$
+}
+
+define command{
+        command_name    check_nrpe1
+        command_line    /usr/lib64/nagios/plugins/check_nrpe -H $HOSTADDRESS$ -c $ARG1$
+}
+
+
+# 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/nagios/servers/node1.cfg
+
+define host{
+        use             linux-server
+        host_name       comnode
+        alias           Linux Host
+        address         192.168.1.150
+}
+
+define service{
+        use                     generic-service    
+        host_name               comnode
+        service_description     PING
+        check_command           check_ping!100.0,20%!500.0,60%
+}
+ 
+define service {
+        use                     generic-service
+        host_name               comnode
+        service_description     Root Partition
+        check_command           check_nrpe!check_disk\!20%\!10%\!/
+}
+
+define service {
+        use                     generic-service
+        host_name               comnode
+        service_description     Current Users
+        check_command           check_nrpe!check_users\!20\!50
+}
+
+define service {
+        use                     generic-service
+        host_name               comnode
+        service_description     Total Processes
+        check_command           check_nrpe!check_procs\!250\!400\!RSZDT
+}
+
+define service {
+        use                     generic-service
+        host_name               comnode
+        service_description     Current Load
+        check_command           check_nrpe!check_load\!5.0,4.0,3.0\!10.0,6.0,4.0
+}
+
+define service {
+        use                     generic-service
+        host_name               comnode
+        service_description     Nova metadata
+        check_command           check_nrpe1!check_nova_metadata
+}
+
+define service {
+        use                     generic-service
+        host_name               comnode
+        service_description     Nova compute
+        check_command           check_nrpe1!check_nova_compute
+}
+
+
+
+
+# Computer node 에서 진행
+
+[root@Compute ~]# yum -y install epel-release
+[root@Compute ~]# yum -y install nrpe nagios-plugins-all
+
+
+
+
+[root@Compute ~]# vi /etc/nagios/nrpe.cfg
+
+log_facility=daemon
+debug=0
+pid_file=/var/run/nrpe/nrpe.pid
+server_port=5666
+nrpe_user=nrpe
+nrpe_group=nrpe
+allowed_hosts=127.0.0.1,192.168.1.100
+dont_blame_nrpe=1
+allow_bash_command_substitution=0
+command_timeout=60
+connection_timeout=300
+disable_syslog=0
+command[check_users]=/usr/lib64/nagios/plugins/check_users -w $ARG1$ -c $ARG2$
+command[check_load]=/usr/lib64/nagios/plugins/check_load -w $ARG1$ -c $ARG2$
+command[check_disk]=/usr/lib64/nagios/plugins/check_disk -w $ARG1$ -c $ARG2$ -p $ARG3$
+command[check_procs]=/usr/lib64/nagios/plugins/check_procs -w $ARG1$ -c $ARG2$ -s $ARG3$
+command[check_nova_metadata]=/usr/lib64/nagios/plugins/check_procs -C nova-api-metadata -u nova -c 1:4
+command[check_nova_compute]=/usr/lib64/nagios/plugins/check_procs -C nova-compute -u nova -c 1:4
+include_dir=/etc/nrpe.d/
+
+
+# nrpe 서비스 재시작 및 자동시작 등록
+[root@Compute ~]# systemctl start nrpe
+[root@Compute ~]# systemctl enable nrpe
+
+
+
+# Controller Node 에서 진행
+
+# Nagios와 Apache 재시작 및 자동 시작 등록
+[root@Controller ~(keystone)]# systemctl restart nagios httpd
+[root@Controller ~(keystone)]# systemctl enable nagios
+ 
+
+

@@ -1,0 +1,306 @@
+# java 패키지 확인
+
+[root@Controller ~(keystone)]# yum -y install java python-java tzdata-java
+
+
+# elasticsearch 패키지 다운로드
+[root@Controller ~(keystone)]# wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-7.6.1-x86_64.rpm
+
+
+# elasticsearch 패키지 압축 해제
+[root@Controller ~(keystone)]# rpm -ivh elasticsearch-7.6.1-x86_64.rpm
+
+
+# GPG 키 라이센스 등록
+[root@Controller ~(keystone)]# rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+
+# elasticsearch 서비스 데몬 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/elasticsearch/elasticsearch.yml
+
+43 bootstrap.memory_lock: true
+55 network.host: localhost
+59 http.port: 9200
+
+[root@Controller ~(keystone)]# vi /etc/sysconfig/elasticsearch
+46 MAX_LOCKED_MEMORY=unlimited
+
+
+# 데몬 리로드
+[root@Controller ~(keystone)]# systemctl daemon-reload
+
+
+# 서비스 시작 및 자동시작 등록
+[root@Controller ~(keystone)]# systemctl enable elasticsearch
+[root@Controller ~(keystone)]# systemctl start elasticsearch
+
+
+# elasticsearch 포트 정보 확인
+[root@Controller ~(keystone)]# lsof -i tcp:9200
+COMMAND  PID          USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+java    4471 elasticsearch  250u  IPv6  71877      0t0  TCP localhost:wap-wsp (LISTEN)
+java    4471 elasticsearch  252u  IPv6  71878      0t0  TCP localhost:wap-wsp (LISTEN)
+
+
+# elasticsearch 서비스 정보 확인
+
+[root@Controller ~(keystone)]# curl -XGET 'localhost:9200/_nodes?filter_path=**.                                               
+[root@Controller ~(keystone)]# curl -XGET 'localhost:9200/?pretty'
+
+
+
+# kibana 패키지 다운로드
+[root@Controller ~(keystone)]# wget https://artifacts.elastic.co/downloads/kibana/kibana-7.6.1-x86_64.rpm
+
+
+# kibana 패키지 압축해제
+[root@Controller ~(keystone)]# rpm -ivh kibana-7.6.1-x86_64.rpm
+
+# kibana 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/kibana/kibana.yml
+
+2 server.port: 5601
+7 server.host: "0.0.0.0"
+
+
+# epel 패키지 설치
+[root@Controller ~(keystone)]# yum -y install epel-release
+
+# nginx 패키지 설치
+[root@Controller ~(keystone)]# yum -y install nginx
+
+
+# nginx 설정 파일 수정
+[root@Controller ~(keystone)]# vi /etc/nginx/nginx.conf
+
+38     server {
+39         listen 81;
+40
+41         server_name openstack.com;
+42         auth_basic "Restricted Access";
+43         auth_basic_user_file /etc/nginx/.kibana-user;
+44         proxy_redirect off;
+45         proxy_http_version 1.1;
+46         proxy_set_header X-Real-IP $remote_addr;
+47         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+48         proxy_set_header Host $host;
+49         proxy_cache_bypass $http_upgrade;
+50
+51     location / {
+52         proxy_pass http://localhost:5601;
+53     }
+54
+55 }
+
+
+
+# 웹 접근시 인증 할 사용자 및 패스워드 생성
+[root@Controller ~(keystone)]# htpasswd -c /etc/nginx/.kibana-user Admin
+New password: 1
+Re-type new password: 1
+Adding password for user Admin
+
+
+
+# logstash 패키지 다운로드
+[root@Controller ~(keystone)]# wget https://artifacts.elastic.co/downloads/logstash/logstash-7.6.1.rpm
+
+# logstash 패키지 압축해제
+[root@Controller ~(keystone)]# rpm -ivh logstash-7.6.1.rpm
+
+
+
+# 로그 전송시 암호화 전송을 위해 ssl 설정파일 수정
+[root@Controller ~(keystone)]# vi /etc/pki/tls/openssl.cnf
+
+226 [ v3_ca ]
+227 subjectAltName = IP: 192.168.1.100
+
+
+# 공개키&개인키 및 인증서 발급
+[root@Controller ~(keystone)]# openssl req -config /etc/pki/tls/openssl.cnf \
+> -x509 -days 3650 -batch -nodes -newkey rsa:2048 \
+> -keyout /etc/pki/tls/private/logstash-forwarder.key \
+> -out /etc/pki/tls/certs/logstash-forwarder.crt
+
+
+# logstash input, output 및 filter식 작성
+[root@Controller ~(keystone)]# vi /etc/logstash/conf.d/syslog.conf
+
+input {
+  beats {
+    client_inactivity_timeout => 600
+    port => 5044
+    ssl => true
+    ssl_certificate => "/etc/pki/tls/certs/logstash-forwarder.crt"
+    ssl_key => "/etc/pki/tls/private/logstash-forwarder.key"
+  }
+}
+
+filter {
+  if [type] == "syslog" {
+    grok {
+      match => { "message" => "%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}(?:\[%{POSINT:syslog_pid}\])?: %{GREEDYDATA:syslog_message}" }
+    }
+    date {
+      match => [ "syslog_timestamp", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss" ]
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["localhost:9200"]
+    index => "%{[@metadata][beat]}-%{+YYYY.MM.dd}"
+  }
+}
+
+
+# logstash 서비스 시작 및 자동시작 등록
+[root@Controller ~(keystone)]# systemctl start logstash
+[root@Controller ~(keystone)]# systemctl enable logstash
+
+
+# Filebeat 를 사용할 서버로 인증서 scp
+[root@Controller ~(keystone)]# scp /etc/pki/tls/certs/logstash-forwarder.crt 192.168.1.150:/etc/pki/tls/certs/
+
+
+# Filebeat로 로그를 전송 할 150서버에서 Filebeat 패키지 다운로드
+[root@Compute ~]# wget https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.6.1-x86_64.rpm
+
+
+# GPG 라이센스 등록
+[root@Compute ~]# rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+
+# Filebeat 패키지 압축해제
+[root@Compute ~]# rpm -ivh filebeat-7.6.1-x86_64.rpm
+
+
+# Filebeat 설정파일 수정
+[root@Compute ~]# vi /etc/filebeat/filebeat.yml
+
+24   enabled: true
+27   paths:
+28     - /var/log/nova/*
+29     - /var/log/neutron/*
+30     - /var/log/openvswitch
+31     - /var/log/swift
+32     - /var/log/messages
+33     #- c:\programdata\elasticsearch\logs\*
+152 #output.elasticsearch:
+153   # Array of hosts to connect to.
+154   #hosts: ["localhost:9200"]
+165 output.logstash:
+166   # The Logstash hosts
+167   hosts: ["192.168.1.100:5044"]
+168   ssl.certificate_authorities: ["/etc/pki/tls/certs/logstash-forwarder.crt"]
+169   bulk_max_size: 1024
+
+
+# filebeat 서비스 시작 및 자동시작 등록
+[root@Compute ~]# systemctl start filebeat
+[root@Compute ~]# systemctl enable filebeat
+
+
+
+# kibana, nginx 서비스 시작 및 자동시작 등록
+[root@Controller ~(keystone)]# systemctl enable kibana nginx
+[root@Controller ~(keystone)]# systemctl start kibana nginx
+
+
+
+######## Compute Node , Network Node에서 로그 전송을 위한 Filebeat 추가 설치
+
+
+# SSL 인증서 전송
+[root@Controller ~(keystone)]# scp /etc/pki/tls/certs/logstash-forwarder.crt root@HOST_NAME:/etc/pki/tls/certs
+
+
+# Filebeat 패키지 다운로드
+[root@HOST_NAME ~]# wget https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.6.1-x86_64.rpm
+
+
+# Filebeat 패키지 압축해제
+[root@HOST_NAME ~]# rpm -ivh filebeat-7.6.1-x86_64.rpm
+
+
+
+# Filebeat 설정파일 수정
+[root@HOST_NAME ~]# vi /etc/filebeat/filebeat.yml
+
+24   enabled: true
+28     - /var/log/messages
+29     - /var/log/nova/*.log
+       ...... (전송 할 로그 절대경로 입력)
+30     #- c:\programdata\elasticsearch\logs\*
+149 #output.elasticsearch:
+150   # Array of hosts to connect to.
+151   #hosts: ["localhost:9200"]
+162 output.logstash:
+163   # The Logstash hosts
+164   hosts: ["192.168.1.100:5044"]
+165   ssl.certificate_authorities: ["/etc/pki/tls/certs/logstash-forwarder.crt"]
+166   bulk_max_size: 1024
+
+
+# filebeat 서비스 시작 및 자동시작 등록
+[root@HOST_NAME ~]# systemctl start filebeat
+[root@HOST_NAME ~]# systemctl enable filebeat
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+######## FTP_Server에서 FTP 업.다운로드 로그 전송을 위한 Filebeat 추가 설치
+
+
+# SSL 인증서 FTP_Server로 전송
+[root@Controller ~(keystone)]# scp /etc/pki/tls/certs/logstash-forwarder.crt 192.168.1.243:/etc/pki/tls/certs/
+
+
+# wget 패키지 설치
+[root@ftp-server ~]# yum -y install wget
+
+
+# Filebeat 패키지 다운로드
+[root@ftp-server ~]# wget https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.6.1-x86_64.rpm
+
+
+# Filebeat 패키지 압축해제
+[root@ftp-server ~]# rpm -ivh filebeat-7.6.1-x86_64.rpm
+
+
+# Filebeat 설정파일 수정
+[root@ftp-server ~]# vi /etc/filebeat/filebeat.yml
+
+24   enabled: true
+28     - /var/log/messages
+29     - /var/log/xferlog
+30     #- c:\programdata\elasticsearch\logs\*
+149 #output.elasticsearch:
+150   # Array of hosts to connect to.
+151   #hosts: ["localhost:9200"]
+162 output.logstash:
+163   # The Logstash hosts
+164   hosts: ["192.168.1.100:5044"]
+165   ssl.certificate_authorities: ["/etc/pki/tls/certs/logstash-forwarder.crt"]
+166   bulk_max_size: 1024
+
+
+
+
+# filebeat 서비스 시작 및 자동시작 등록
+[root@ftp-server ~]# systemctl start filebeat
+[root@ftp-server ~]# systemctl enable filebeat

@@ -1,0 +1,93 @@
+
+
+
+# aodh 유저 생성 및 관리자 권한 부여
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 aodh
+[root@Controller ~(keystone)]# openstack role add --project service --user aodh admin
+
+
+# aodh 서비스 생성
+[root@Controller ~(keystone)]# openstack service create --name aodh --description "Telemetry" alarming
+
+
+# aodh 앤드포인트 생성
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne alarming public http://192.168.1.100:8042
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne alarming admin http://192.168.1.100:8042
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne alarming internal http://192.168.1.100:8042
+
+
+
+# aodh 패키지 설치
+[root@Controller ~(keystone)]# yum -y install openstack-aodh-api openstack-aodh-evaluator openstack-aodh-notifier openstack-aodh-listener openstack-aodh-expirer python-aodhclient
+
+
+
+# aodh 데이터베이스,유저 생성 및 권한 부여
+[root@Controller ~(keystone)]# mysql -u root -p
+Enter password: 1
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 234
+Server version: 10.3.20-MariaDB MariaDB Server
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> create database aodh;
+Query OK, 1 row affected (0.000 sec)
+
+MariaDB [(none)]> grant all privileges on gnocchi.* to aodh@'localhost' identified by 'itbank';
+Query OK, 0 rows affected (0.001 sec)
+
+MariaDB [(none)]> grant all privileges on gnocchi.* to aodh@'%' identified by 'itbank';
+Query OK, 0 rows affected (0.000 sec)
+
+MariaDB [(none)]> flush privileges;
+Query OK, 0 rows affected (0.000 sec)
+
+MariaDB [(none)]> exit
+Bye
+
+
+
+# 설정파일 수정
+[root@Controller ~(keystone)]# vi /etc/aodh/aodh.conf
+
+
+[DEFAULT]
+transport_url = rabbit://openstack:password@192.168.1.100
+auth_strategy = keystone
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = aodh
+password = 1
+
+[service_credentials]
+auth_type = password
+auth_url = http://192.168.1.100:5000/v3
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = aodh
+password = 1
+interface = internalURL
+region_name = RegionOne
+
+[database]
+connection = mysql+pymysql://aodh:1@controller/aodh
+
+
+# 데이터베이스 동기화
+[root@Controller ~(keystone)]# aodh-dbsync
+
+
+# 서비스 시작 및 자동시작 등록
+[root@Controller ~(keystone)]# systemctl enable openstack-aodh-api openstack-aodh-evaluator openstack-aodh-notifier openstack-aodh-listener
+[root@Controller ~(keystone)]# systemctl start openstack-aodh-api openstack-aodh-evaluator openstack-aodh-notifier openstack-aodh-listener

@@ -1,0 +1,138 @@
+------------+---------------------------+---------------------------+-----------------
+            |                           |                           |
+       ens32|192.168.1.100         ens32|192.168.1.200         ens32|192.168.1.150
++-----------+-----------+   +-----------+-----------+   +-----------+-----------+
+|    [ Control Node ]   |   |    [ Storage Node ]   |   |    [ Compute Node ]   |
+|                       |   |    [ Network Node ]   |   |                       |
+|  MariaDB    RabbitMQ  |   |       DHCP Agent      |   |        Libvirt        |
+|  Memcached  httpd     |   |      Open vSwitch     |   |     Nova Compute      |
+|  Keystone   Glance    |   |        L2 Agent       |   |      Open vSwitch     |
+|  Nova API             |   |        L3 Agent       |   |        L2 Agent       |
+|  Neutron Server       |   |     Metadata Agent    |   |                       |
+|  Metadata Agent       |   |      iSCSI-target     |   |                       |
+|  Cinder API           |   |     Cinder Volume     |   |                       |
++-----------------------+   +-----------------------+   +-----------------------+
+
+
+[ ### Controller Node 설정 ### ]
+
+# 사용자 생성 및 관리권한 부여작업을 진행
+[root@controller ~(keystone)]# openstack user create --domain default --project service --password 1 cinder
+[root@controller ~(keystone)]# openstack role add --project service --user cinder admin
+[root@controller ~(keystone)]# openstack service create --name cinderv3 --description "OpenStack Block Storage" volumev3
+[root@Controller ~(keystone)]# export controller=192.168.1.100
+
+
+# Endpoint 생성
+[root@controller ~(keystone)]# openstack endpoint create --region RegionOne volumev3 public http://$controller:8776/v3/%\(tenant_id\)s
+[root@controller ~(keystone)]# openstack endpoint create --region RegionOne volumev3 internal http://$controller:8776/v3/%\(tenant_id\)s
+[root@controller ~(keystone)]# openstack endpoint create --region RegionOne volumev3 admin http://$controller:8776/v3/%\(tenant_id\)s
+
+
+# Database 생성 및 권한 부여
+[root@controller ~(keystone)]# mysql -u root -p
+
+MariaDB [(none)]> create database cinder;
+MariaDB [(none)]> grant all privileges on cinder.* to cinder@'localhost' identified by '1';
+MariaDB [(none)]> grant all privileges on cinder.* to cinder@'%' identified by '1';
+MariaDB [(none)]> flush privileges;
+
+
+# Cinder 패키지 설치
+[root@controller ~(keystone)]# yum --enablerepo=centos-openstack-train,epel -y install openstack-cinder
+
+# 설정 파일 수정
+[root@controller ~(keystone)]# vi /etc/cinder/cinder.conf
+
+[DEFAULT]
+my_ip = 192.168.1.100
+log_dir = /var/log/cinder
+state_path = /var/lib/cinder
+auth_strategy = keystone
+transport_url = rabbit://openstack:password@192.168.1.100
+enable_v3_api = True
+
+[database]
+connection = mysql+pymysql://cinder:1@192.168.1.100/cinder
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = cinder
+password = 1
+
+[oslo_concurrency]
+lock_path = $state_path/tmp
+
+
+# 방화벽 설정
+[root@controller ~(keystone)]# firewall-cmd --add-port=8776/tcp --permanent
+[root@controller ~(keystone)]# firewall-cmd --reload
+
+
+# Database 연동
+[root@controller ~(keystone)]# su -s /bin/bash cinder -c "cinder-manage db sync"
+
+# Cinder 서비스 재시작 및 자동 시작 등록
+[root@controller ~(keystone)]# systemctl start openstack-cinder-api openstack-cinder-scheduler
+[root@controller ~(keystone)]# systemctl enable openstack-cinder-api openstack-cinder-scheduler
+
+
+# Cinder 서비스 활성화 확인
+
+[root@controller ~(keystone)]# echo "export OS_VOLUME_API_VERSION=3" >> ~/keystonerc
+[root@controller ~(keystone)]# source ~/keystonerc
+
+
+[root@controller ~(keystone)]# openstack volume service list
++------------------+------------+------+---------+-------+----------------------------+
+| Binary           | Host       | Zone | Status  | State | Updated At                 |
++------------------+------------+------+---------+-------+----------------------------+
+| cinder-scheduler | Controller | nova | enabled | up    | 2020-05-21T10:16:36.000000 |
++------------------+------------+------+---------+-------+----------------------------+
+
+
+
+
+[ ### Storage Node 설정 ### ]
+
+# 패키지 설치
+[root@Network ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-cinder python2-crypto targetcli
+
+# 설정 파일 수정
+[root@Network ~]# vi /etc/cinder/cinder.conf
+
+[DEFAULT]
+my_ip = 192.168.1.200
+log_dir = /var/log/cinder
+state_path = /var/lib/cinder
+auth_strategy = keystone
+transport_url = rabbit://openstack:password@192.168.1.100
+glance_api_servers = http://192.168.1.100:9292
+enable_v3_api = True
+
+[database]
+connection = mysql+pymysql://cinder:1@192.168.1.100/cinder
+
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = cinder
+password = 1
+
+[oslo_concurrency]
+lock_path = $state_path/tmp
+
+# Cinder Volume 서비스 시작 및 자동 시작 등록
+[root@Network ~]# systemctl start openstack-cinder-volume
+[root@Network ~]# systemctl enable openstack-cinder-volume

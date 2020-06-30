@@ -1,0 +1,107 @@
+[ Controller , Compute, Network Node 설치 ]
+- DVD : CentOS-7-x86_64-DVD-2003.iso
+- 설치 유형 : CentOS7 최소설치
+- Controller Node 
+	: HDD(100GB),HDD(9GB Swap 메모리 할당) RAM(6.5GB), VCPU(4), 가상화 기능활성화
+	: HostName: Controller
+	: IP: 192.168.1.100/24
+
+- Compute Node
+	: HDD(100GB), RAM(3.4GB), VCPU(8), 가상화 기능활성화
+	: HostName: Compute
+	: IP 192.168.1.150/24
+
+- Network Node 
+	: HDD(50GB), RAM(2.5GB), VCPU(4), 가상화 기능활성화
+	: HostName: Network
+	: IP 192.168.1.200/24
+
+
+[ 1. 공통설정 ]
+# yum -y install centos-release-openstack-train 
+# yum -y install net-tools wget lsof nmap
+# yum -y update
+
+# systemctl disable NetworkManager
+# systemctl stop NetworkManager
+
+# systemctl disable firewalld
+# systemctl stop firewalld
+
+# setenforce 0
+# vi /etc/sysconfig/selinux
+SELINUX=disabled
+
+# vi /etc/hosts
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+192.168.1.100   Controller      Controller
+192.168.1.150   Compute         Compute
+192.168.1.200   Network         Network
+
+
+
+
+yum --enablerepo=centos-openstack-train -y install mariadb-server
+yum --enablerepo=centos-openstack-train -y install rabbitmq-server memcached
+
+
+vi /etc/my.cnf.d/mariadb-server.cnf
+
+[mysqld]
+21 max_connections=500
+22 character-set-server=utf8 
+
+
+
+vi /etc/sysconfig/memcached
+5 OPTIONS="-l 0.0.0.0,::"
+
+
+systemctl start mariadb rabbitmq-server memcached
+systemctl enable mariadb rabbitmq-server memcached
+
+
+mysql_secure_installation
+
+NOTE: RUNNING ALL PARTS OF THIS SCRIPT IS RECOMMENDED FOR ALL MariaDB
+      SERVERS IN PRODUCTION USE!  PLEASE READ EACH STEP CAREFULLY!
+
+In order to log into MariaDB to secure it, we'll need the current
+password for the root user.  If you've just installed MariaDB, and
+you haven't set the root password yet, the password will be blank,
+so you should just press enter here.
+
+Enter current password for root (enter for none):
+OK, successfully used password, moving on...
+
+Setting the root password ensures that nobody can log into the MariaDB
+root user without the proper authorisation.
+
+Set root password? [Y/n] y
+New password: 1
+Re-enter new password: 1
+Password updated successfully!
+Reloading privilege tables..
+ ... Success!
+
+
+#MessageQ Server 사용자 생성 및 패스워드 지정 및 권한부여
+
+rabbitmqctl add_user openstack password
+Creating user "openstack"
+rabbitmqctl set_permissions openstack ".*" ".*" ".*"
+
+Setting permissions for user "openstack" in vhost "/"
+
+
+
+#Cache Server 및 MariaDB 방화벽 설정
+
+firewall-cmd --add-service=mysql --permanent
+firewall-cmd --add-port=11211/tcp,5672/tcp --permanent ( Memcached , Rabbitmq )
+firewall-cmd --reload
+
+
+
+# reboot

@@ -1,0 +1,41 @@
+   ens32|192.168.1.100 
++-----------+-----------+
+|  [ Controller Node ]  |
+|                       |
+|  MariaDB    RabbitMQ  |
+|  Memcached  httpd     |
+|  Keystone   Glance    |
++-----------------------+
+
+# image 다운로드 및 압축해제
+[root@controller ~(keystone)]# wget https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud-1907.qcow2.xz -P /var/lib/libvirt/images/
+[root@controller ~(keystone)]# xz -d /var/lib/libvirt/images/CentOS-7-x86_64-GenericCloud-1907.qcow2.xz
+[root@Controller ~(keystone)]# ls -l /var/lib/libvirt/images/
+합계 920208
+-rw-r--r-- 1 root root 942407680  8월  8  2019 CentOS-7-x86_64-GenericCloud-1907.qcow2
+
+
+
+
+
+# 다운로드한 클라우드 이미지를 Glance에 저장 하기위해 이미지 생성 명령어 작성
+[root@Controller ~(keystone)]# glance image-create --name "CentOS7_image" \
+> --file /var/lib/libvirt/images/CentOS-7-x86_64-GenericCloud-1907.qcow2 \
+> --disk-format qcow2 --container-format bare --visibility public
+
+
+
+
+# 실제 등록된 이미지의 저장경로 확인
+[root@Controller ~(keystone)]# ls -l /var/lib/glance/images/
+-rw-r----- 1 glance glance 942407680  5월 19 14:36 42839f07-e940-4514-8019-f60dbba6c694
+
+
+
+# Image 목록확인 (/etc/glance/glance-api.conf 에 설정 해놓은 위치.)
+[root@Controller ~(keystone)]# openstack image list
++--------------------------------------+---------------+--------+
+| ID                                   | Name          | Status |
++--------------------------------------+---------------+--------+
+| 42839f07-e940-4514-8019-f60dbba6c694 | CentOS7_image | active |
++--------------------------------------+---------------+--------+

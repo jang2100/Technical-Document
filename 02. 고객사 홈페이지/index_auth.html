@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CLOUD WEB</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <link href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/js/bootstrap.min.js"></script>
+    
+    <style>
+    .navbar {
+        font-size: 15px;
+        margin-bottom: 0;
+        border-radius: 0;
+    }
+    .carousel-inner > .item > img {
+        width:1200px;
+        height:600px;
+    }
+    .modal-content {
+        font-size: 15px; 
+        margin: 0;
+        padding: 0;
+    }
+    .navbar-brand {
+        background-color:#000000
+    }
+    </style>
+
+</head>
+
+<body style="font-family: 'Nanum Gothic', sans-serif;">
+    <!-- Navigation Bar Container -->
+    <div class="container">
+    <div class="row">
+        <div class="col-sm-12">   
+        <nav class="navbar navbar-inverse">
+            <div class="container-fulid">
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#MyNav">
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>                        
+                    </button>
+                    <a class="navbar-brand" href="./index_auth.html">
+                        <img style="max-width:45px; margin-top: -13px;" src="./images/logo.png">
+                    </a>
+                </div>
+                <div class="collapse navbar-collapse" id="MyNav">
+                <ul class="nav navbar-nav">
+                    <li><a href="./index_auth.html">HOME</a></li>
+                    <li><a href="./php/board.php">BULLETIN BOARD</a></li>
+                    <li class="dropdown">
+                        <a class="dropdown-toggle" data-toggle="dropdown" href="#">LAPTOP STORE LINK <span class="caret"></span></a>
+                        <ul class="dropdown-menu">
+                            <li><a href="https://www8.hp.com/kr/ko/laptops/laptops-and-2-in-1s.html" target="_blank">HP STORE</a></li>
+                            <li><a href="https://www.apple.com/kr/mac" target="_blank">APPLE STORE</a></li>
+                            <li><a href="https://www.dell.com/ko-kr" target="_blank">DELL STORE</a></li>
+                            <li><a href="https://www.microsoft.com/ko-kr/surface/devices/surface-book-2?activetab=surface_book_2_pivot%3aprimaryr3" target="_blank">MS STORE</a></li>
+                        </ul>
+                    </li>
+                </ul>
+
+                <ul class="nav navbar-nav navbar-right">
+                    <li><a href="./php/logout.php"><span class="glyphicon glyphicon-log-out"></span>  LOGOUT</a></li>
+                </ul>
+            </div>
+        </nav>
+        </div>
+    </div>
+    </div><br>
+
+    <!-- Carousel Container --> 
+    <div class="container">
+    <div id="myCarousel" class="carousel slide" data-ride="carousel">
+        <ol class="carousel-indicators">
+            <li data-target="#myCarousel" data-slide-to="0"></li>
+            <li data-target="#myCarousel" data-slide-to="1" class="active"></li>
+            <li data-target="#myCarousel" data-slide-to="2"></li>
+        </ol>
+
+        <div class="carousel-inner">
+            <div class="item">
+                <img src="./images/carousel_1.jpg" alt="Laptop_1">
+                <div class="carousel-caption">
+                    <h3><strong>Best Laptop Customize</strong></h3>
+                    <h4>Laptop Touch Pad</h4>
+                </div>
+            </div>
+
+            <div class="item active">
+                <img src="./images/carousel_2.jpg" alt="Laptop_2">
+                <div class="carousel-caption">
+                    <h3><strong>Best Laptop Customize</strong></h3>
+                    <h4>Laptop Key Skin</h4>
+                </div>
+            </div>
+
+            <div class="item">
+                <img src="./images/carousel_3.jpg" alt="Laptop_3">
+                <div class="carousel-caption">
+                    <h3><strong>Best Laptop Customize</strong></h3>
+                    <h4>Laptop Touch Pad</h4>
+                </div>
+            </div>
+        </div>
+
+        <a class="left carousel-control" href="#myCarousel" data-slide="prev">
+            <span class="glyphicon glyphicon-chevron-left"></span>
+            <span class="sr-only">Previous</span>
+        </a>
+
+        <a class="right carousel-control" href="#myCarousel" data-slide="next">
+            <span class="glyphicon glyphicon-chevron-right"></span>
+            <span class="sr-only">Next</span> 
+        </a>
+    </div>
+    </div>
+    <br><br>
+
+    <!-- Main Content (Collapse) -->
+    <div id="STORE" class="container text-center">
+        <h3>Best Seller</h3>
+        <br>
+
+        <div class="row">
+        <div class="col-sm-4">
+            <a href="#STORE1" data-toggle="collapse">
+                <img src="./images/STORE_1.jpg" alt="STORE_1" width="350" height="300">
+            </a>
+            <br>
+            <div id="STORE1" class="collapse collapse in">
+                <h5 class="text-center"><strong>[ ASUS 젠북 프로 듀오 UX581GV-H2003TS ]</strong></h5>
+                <p>15.6인치</p>
+                <p>￦3,699,000</p>
+                <p>인텔 i9-9750H / RTX2060 / RAM 32G / NVMe SSD 1TB / 4K UHD OLED / 스크린패드 / Wi-FI 6</p>
+            </div>
+        </div>
+
+
+        <div class="col-sm-4">
+            <a href="#STORE2" data-toggle="collapse">
+                <img src="./images/STORE_2.jpg" alt="STORE_2" width="350" height="300">
+            </a>
+            <br>
+            <div id="STORE2" class="collapse collapse in">
+                <h5 class="text-center"><strong>[ ASUS 젠북15 UX534FTC-A9082T ]</strong></h5>
+                <p>15.6인치</p>
+                <p>￦1,649,000</p>
+                <p>인텔 i7-10510U / GTX 1650 / RAM 16GB / NVMe SSD 1TB / UHD / 터치패드 </p>
+            </div>
+        </div>
+
+        
+        <div class="col-sm-4">
+            <a href="#STORE3" data-toggle="collapse">
+                <img src="./images/STORE_3.jpg" alt="STORE_3" width="350" height="300">
+            </a>
+            <br>
+            <div id="STORE3" class="collapse collapse in">
+                <h5 class="text-center"><strong>[ LG전자 2020 그램15 15ZD90N-VX50K ]</strong></h5>
+                <p>15.6인치</p>
+                <p>￦1,490,000</p>
+                <p>인텔 i5-1035G7 / RAM 8GB / SSD 256 GB</p>
+            </div>
+        </div>
+        </div>
+        <br><br>
+
+        <div class="row">
+        <div class="col-sm-4">
+            <a href="#STORE4" data-toggle="collapse">
+                <img src="./images/STORE_4.jpg" alt="STORE_4" width="350" height="300">
+            </a>
+            <br>
+            <div id="STORE4" class="collapse collapse in">
+                <h5 class="text-center"><strong>[ MSI GL시리즈 GL75 9SDK ]</strong></h5>
+                <p>17인치 / 144Hz</p>
+                <p>￦1,349,000</p>
+                <p>인텔 i7-9750H / GTX 1660Ti / 램8GB / NVMe512GB</p>
+            </div>
+        </div>
+
+        <div class="col-sm-4">
+            <a href="#STORE5" data-toggle="collapse">
+                <img src="./images/STORE_5.jpg" alt="STORE_5" width="350" height="300">
+            </a>
+            <br>
+            <div id="STORE5" class="collapse collapse in">
+                <h5 class="text-center"><strong>[ 레노버 LEGION Y540-15IRH i7 Prime Edition ]</strong></h5>
+                <p>15.6인치 / 144Hz</p>
+                <p>￦1,349,000</p>
+                <p>인텔 i7-9760HF / GTX1660Ti / RAM 16GB / NVMe SSD 512 GB + HDD 1TB</p>
+            </div>
+        </div>
+
+        <div class="col-sm-4">
+            <a href="#STORE6" data-toggle="collapse">
+                <img src="./images/STORE_6.jpg" alt="STORE_6" width="350" height="300">
+            </a>
+            <br>
+            <div id="STORE6" class="collapse collapse in">
+                <h5 class="text-center"><strong>[ ASUS 비보북 17 D712DA-AU071 ]</strong></h5>
+                <p>17.3인치</p>
+                <p>￦697,000</p>
+                <p>라이젠5-3500U / RAM 8 GB / NVMe SSD 512 GB</p>
+            </div>
+        </div>
+        </div>
+    </div>
+    </div>
+    <br><br><br>
+
+    <!-- 고객센터 Container -->
+    <div id="contact" class="container">
+    <h3>QUESTION</h3><br>
+    <div class="row">
+  
+    <div class="col-md-4">
+        <p><span class="glyphicon glyphicon-map-marker"></span> Seoul, KR</p>
+        <p><span class="glyphicon glyphicon-phone"></span> Phone: +82 1544-0000</p>
+        <p><span class="glyphicon glyphicon-envelope"></span> Email: cloud@cloud.com</p>
+    </div>
+
+    <div class="col-md-8">
+        <div class="row">
+        <form action="#" method="POST" name="service-form"> 
+        <div class="col-sm-6 form-group">
+            <input class="form-control" id="name" maxlength="10" placeholder="Name" type="text" required autocomplete="off">
+        </div>
+        <div class="col-sm-6 form-group">
+            <input class="form-control" id="email" maxlength="40" placeholder="Email" type="email" required autocomplete="off">
+        </div>
+        </div>
+
+        <textarea class="form-control" id="comments" maxlength="100" placeholder="Comment" rows="5" required autocomplete="off"></textarea>
+        <br>
+        <div class="row">
+        <div class="col-md-12 form-group">
+            <button class="btn pull-right btn-default" type="submit">SEND</button>
+        </div>
+        </div>
+        </form>
+    </div>
+    </div>
+
+    <!-- footer Container -->
+    <footer class="container text-center">
+        <p><span>Cloud System Test Site<br>Copyright &copy; BlaBla</span></p>
+    </footer>
+
+</body>
+</html>
+

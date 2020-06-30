@@ -1,0 +1,225 @@
+
+# designate user,endpoint 생성 및 권한 부여
+
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 designate
+
+[root@Controller ~(keystone)]# openstack role add --project service --user designate admin
+
+[root@Controller ~(keystone)]# openstack service create --name designate --description "DNS" dns
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne dns public http://192.168.1.200:9001/
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne dns admin http://192.168.1.200:9001/
+
+[root@Controller ~(keystone)]# openstack endpoint create --region RegionOne dns internal http://192.168.1.200:9001/
+
+
+# 데이터베이스,유저 생성 및 권한 부여
+[root@Controller ~(keystone)]# mysql -u root -p
+Enter password: 1
+
+
+MariaDB [(none)]> create database designate;
+
+MariaDB [(none)]> grant all privileges on designate.* to designate@localhost identified by '1';
+
+MariaDB [(none)]> grant all privileges on designate.* to designate@'%' identified by '1';
+
+MariaDB [(none)]> flush privileges;
+
+MariaDB [(none)]> exit
+
+
+
+# designate 패키지 설치
+
+[root@Network ~]# yum --enablerepo=centos-openstack-train,epel -y install openstack-designate-api openstack-designate-central openstack-designate-worker openstack-designate-producer openstack-designate-mdns python-designateclient bind bind-utils
+
+
+# key 파일 생성
+[root@Network ~]# rndc-confgen -a -k designate -c /etc/designate.key -r /dev/urandom
+wrote key file "/etc/designate.key"
+
+# key파일 소유권 및 허가권 조정
+[root@Network ~]# chown named:designate /etc/designate.key
+[root@Network ~]# chmod 640 /etc/designate.key
+
+
+# 기존 파일 백업 후 새로 작성
+[root@Network ~]# cp -p /etc/named.conf /backup
+[root@Network ~]# vi /etc/named.conf
+
+
+//
+// named.conf
+//
+// Provided by Red Hat bind package to configure the ISC BIND named(8) DNS
+// server as a caching only nameserver (as a localhost DNS resolver only).
+//
+// See /usr/share/doc/bind*/sample/ for example named configuration files.
+//
+// See the BIND Administrator's Reference Manual (ARM) for details about the
+// configuration located in /usr/share/doc/bind-{version}/Bv9ARM.html
+
+options {
+        listen-on port 53 { any; };
+        listen-on-v6 port 53 { ::1; };
+        directory       "/var/named";
+        dump-file       "/var/named/data/cache_dump.db";
+        statistics-file "/var/named/data/named_stats.txt";
+        memstatistics-file "/var/named/data/named_mem_stats.txt";
+        recursing-file  "/var/named/data/named.recursing";
+        secroots-file   "/var/named/data/named.secroots";
+        allow-query     { any; };
+        dnssec-enable yes;
+        dnssec-validation yes;
+        bindkeys-file "/etc/named.root.key";
+        managed-keys-directory "/var/named/dynamic";
+        pid-file "/run/named/named.pid";
+        session-keyfile "/run/named/session.key";
+        allow-new-zones yes;
+        request-ixfr no;
+        recursion no;
+};
+
+include "/etc/designate.key";
+
+controls {
+  inet 0.0.0.0 port 953
+    allow { any; } keys { "designate"; };
+};
+
+logging {
+        channel default_debug {
+                file "data/named.run";
+                severity dynamic;
+        };
+};
+
+zone "." IN {
+        type hint;
+        file "named.ca";
+};
+
+
+
+
+
+# designate 설정 파일 수정
+[root@Network ~]# vi /etc/designate/designate.conf
+
+[DEFAULT]
+log_dir = /var/log/designate
+transport_url = rabbit://openstack:password@192.168.1.100:5672/
+
+[database]
+# MariaDB connection info
+connection = mysql+pymysql://designate:1@192.168.1.100/designate
+
+[service:api]
+listen = 0.0.0.0:9001
+auth_strategy = keystone
+api_base_uri = http://192.168.1.200:9001
+enable_api_v2 = True
+enable_api_admin = True
+enable_host_header = True
+enabled_extensions_admin = quotas, reports
+
+# Keystone auth info
+[keystone_authtoken]
+www_authenticate_uri = http://192.168.1.100:5000
+auth_url = http://192.168.1.100:5000
+memcached_servers = 192.168.1.100:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = designate
+password = 1
+
+[service:worker]
+enabled = True
+notify = True
+
+[storage:sqlalchemy]
+# MariaDB connection info
+connection = mysql+pymysql://designate:1@192.168.1.100/designate
+
+
+
+
+# designate 설정파일 소유권 및 허가권 설정
+
+[root@Network ~]# chmod 640 /etc/designate/designate.conf
+[root@Network ~]# chgrp designate /etc/designate/designate.conf
+
+# 데이터 베이스 동기화
+[root@Network ~]# su -s /bin/sh -c "designate-manage database sync" designate
+
+
+
+
+
+
+
+# pool 파일 생성
+[root@Network ~]# vi /etc/designate/pools.yaml
+
+
+
+- name: default
+  description: Default Pool
+  attributes: {}
+  ns_records:
+    - hostname: shopping.com.
+      priority: 1
+  nameservers:
+    - host: 192.168.1.200
+      port: 53
+  targets:
+    - type: bind9
+      description: BIND9 Server
+      masters:
+        - host: 192.168.1.200
+          port: 5354
+      options:
+        host: 192.168.1.200
+        port: 53
+        rndc_host: 192.168.1.200
+        rndc_port: 953
+        rndc_key_file: /etc/designate.key
+
+
+
+# pool파일 소유권 및 허가권 설정
+[root@Network ~]# chmod 640 /etc/designate/pools.yaml
+[root@Network ~]# chgrp designate /etc/designate/pools.yaml
+
+
+# pool 파일 정보 데이터베이스에 동기화
+[root@Network ~]# su -s /bin/sh -c "designate-manage pool update" designate
+Updating Pools Configuration
+****************************
+
+
+# designate 서비스 시작 및 자동시작 등록
+[root@Network ~]# systemctl start designate-central designate-api
+[root@Network ~]# systemctl enable designate-central designate-api
+[root@Network ~]# systemctl start designate-worker designate-producer designate-mdns
+[root@Network ~]# systemctl enable designate-worker designate-producer designate-mdns
+
+
+[root@network ~]# firewall-cmd --permanent --add-service=dns
+[root@network ~]# firewall-cmd --permanent --add-port={5354/tcp,9001/tcp}
+[root@network ~]# firewall-cmd --reload
+
+
+
+# centos 계정으로 zone 생성
+
+[centos@Controller ~(keystone)]$ openstack zone create --email dnsmaster@server.com shopping.com.
+
+
+
+# 기존 로드밸런서 서버를 A레코드에 등록
+[centos@Controller ~(keystone)]$ openstack recordset create --record '192.168.100.231' --type A shopping.com. www

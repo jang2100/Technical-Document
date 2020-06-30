@@ -1,0 +1,80 @@
+[root@MainDB ~]# yum -y install mariadb*
+
+
+#my.cnf 설정 파일 수정
+[root@MainDB ~]# vi /etc/my.cnf
+
+2 log-bin=mysql-bin
+3 server-id=1
+4 character-set-server = utf8
+5 collation-server = utf8_general_ci
+
+
+
+[root@MainDB ~]# systemctl start mariadb
+[root@MainDB ~]# systemctl enable mariadb
+
+
+
+#방화벽 설정
+[root@MainDB ~]# firewall-cmd --permanent --add-service=mysql
+[root@MainDB ~]# firewall-cmd --reload
+
+
+#mysql 기본 설정 (패스워드 설정 등)
+[root@MainDB ~]# mysql_secure_installation
+
+Enter
+Y
+PASSWORD
+PASSWORD
+나머지 Enter
+
+
+#mysql 접속
+[root@MainDB ~]# mysql -u root -p
+Enter password:
+
+
+#웹 서버 DB 생성
+MariaDB [(none)]> create databases webdb;
+
+
+#웹 DB 관리자 생성 및 권한 할당
+MariaDB [(none)]> grant all privileges on webdb.* to admin@localhost identified by '1';
+MariaDB [(none)]> grant all privileges on webdb.* to admin@'%' identified by '1';
+
+
+#웹 회원정보 테이블 생성
+MariaDB [(none)]> use webdb;
+
+MariaDB [(webdb)]> create table member(No int auto_increment primary key, ID varchar(20) not null, PW varchar(100) not null, Name varchar(20) not null, Phone varchar(50) not null, Addr varchar(50) not null, Mail varchar(50) not null);
+
+
+#웹 게시판 테이블 생성
+MariaDB [(webdb)]> create table board(No int auto_increment primary key, Title varchar(50) not null, Content varchar(500) not null, Userid varchar(20) not null, Date varchar(50) not null);
+
+
+#DB Replication을 위한 계정 생성 및 권한 할당
+MariaDB [(webdb)]> grant replication slave on *.* to Rep_Admin@'%' identified by '1';
+MariaDB [(webdb)]> exit
+
+
+#DB 논리백업 파일 생성 및 BackupDB 서버로 전송
+[root@MainDB ~]# mysqldump -u root -p --all-databases > all_backup.sql
+[root@MainDB ~]# scp all_backup.sql root@192.168.1.160:/root
+
+
+#로그파일 정보와 포지션 정보
+[root@MainDB ~]# mysql -u root -p -e "show master status"
+
++------------------+----------+--------------+------------------+
+| File             | Position | Binlog_Do_DB | Binlog_Ignore_DB |
++------------------+----------+--------------+------------------+
+| mysql-bin.000001 |      245 |              |                  |
++------------------+----------+--------------+------------------+
+
+
+
+# BackupDB Node 설정 완료 후 동기화 정보 확인
+[root@MainDB ~]# mysql -u root -p -e "show master processlist\G"
