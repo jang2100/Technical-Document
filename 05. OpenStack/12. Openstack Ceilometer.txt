@@ -17,7 +17,7 @@
 
 
 [ ### Controller Node ### ]
-[root@Controller ~(keystone)]# openstack user create --domain default --project service --password itbank gnocchi
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 gnocchi
 +---------------------+----------------------------------+
 | Field               | Value                            |
 +---------------------+----------------------------------+
@@ -106,10 +106,10 @@ Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
 MariaDB [(none)]> create database gnocchi;
 Query OK, 1 row affected (0.000 sec)
 
-MariaDB [(none)]> grant all privileges on gnocchi.* to gnocchi@'localhost' identified by 'itbank';
+MariaDB [(none)]> grant all privileges on gnocchi.* to gnocchi@'localhost' identified by '1';
 Query OK, 0 rows affected (0.001 sec)
 
-MariaDB [(none)]> grant all privileges on gnocchi.* to gnocchi@'%' identified by 'itbank';
+MariaDB [(none)]> grant all privileges on gnocchi.* to gnocchi@'%' identified by '1';
 Query OK, 0 rows affected (0.000 sec)
 
 MariaDB [(none)]> flush privileges;
@@ -132,7 +132,7 @@ auth_mode = keystone
 backend = sqlalchemy
 
 [indexer]
-url = mysql+pymysql://gnocchi:itbank@192.168.1.100/gnocchi
+url = mysql+pymysql://gnocchi:1@192.168.1.100/gnocchi
 
 [storage]
 driver = file
@@ -147,7 +147,7 @@ project_domain_name = default
 user_domain_name = default
 project_name = service
 username = gnocchi
-password = itbank
+password = 1
 service_token_roles_required = true
 
 [root@Controller ~(keystone)]# vi /etc/httpd/conf.d/10-gnocchi_wsgi.conf
@@ -191,7 +191,7 @@ Listen 8041
 
 
 [ ### Controller Node ### ]
-[root@Controller ~(keystone)]# openstack user create --domain default --project service --password itbank ceilometer
+[root@Controller ~(keystone)]# openstack user create --domain default --project service --password 1 ceilometer
 +---------------------+----------------------------------+
 | Field               | Value                            |
 +---------------------+----------------------------------+
@@ -238,7 +238,7 @@ project_domain_name = default
 user_domain_name = default
 project_name = service
 username = gnocchi
-password = itbank
+password = 1
 
 [service_credentials]
 auth_url = http://192.168.1.100:5000
@@ -248,7 +248,7 @@ project_domain_name = default
 user_domain_name = default
 project_name = service
 username = ceilometer
-password = itbank
+password = 1
 
 [root@Controller ~(keystone)]# su -s /bin/bash ceilometer -c "ceilometer-upgrade --skip-metering-database"
 [root@Controller ~(keystone)]# systemctl start openstack-ceilometer-central openstack-ceilometer-notification
@@ -266,7 +266,7 @@ password = itbank
 
 [root@Compute ~]# vi /etc/ceilometer/ceilometer.conf
 [DEFAULT]
-transport_url = rabbit://openstack:password@192.168.100
+transport_url = rabbit://openstack:password@192.168.1.100
 
 [service_credentials]
 auth_url = http://192.168.1.100:5000
@@ -276,7 +276,7 @@ project_domain_name = default
 user_domain_name = default
 project_name = service
 username = ceilometer
-password = itbank
+password = 1
 
 [root@Compute ~]# systemctl start openstack-ceilometer-compute
 [root@Compute ~]# systemctl enable openstack-ceilometer-compute

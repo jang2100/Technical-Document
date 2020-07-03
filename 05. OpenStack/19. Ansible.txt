@@ -1,0 +1,95 @@
+Controller node에서 진행
+
+#ansible 설치
+yum -y install ansible
+
+#inventory 다운로드
+wget https://raw.githubusercontent.com/ansible/ansible/stable-2.9/contrib/inventory/openstack_inventory.py
+
+
+#Log 수집 디렉토리 생성 및 권한부여
+[root@Controller (keystone)]# mkdir /getlogs
+[root@Controller (keystone)]# chown .centos /getlogs
+[root@Controller (keystone)]# chmod 770 /getlogs
+
+#playbook 디렉토리 및 파일 생성
+[root@Controller (keystone)]# vi /playbook/script.yml
+
+- name : Shell Script
+  hosts: all
+  become: true
+  remote_user: centos
+  tasks:
+     - name: Set timezone to Asia/Seoul
+       command: timedatectl set-timezone Asia/Seoul
+
+     - name: Transfer the script
+       copy: src=/home/centos/Security.sh dest=/home/centos/Security.sh mode=0770
+
+     - name: Execute the script
+       command: sh /home/centos/Security.sh
+
+     - name: Get Logs
+       synchronize:  src=/home/centos/*.txt dest=/pull mode=pull
+
+     - name : Delete Logs
+       shell: rm -rf /home/centos/*.txt
+
+    
+
+
+#centos 계정으로 접속후 진행
+
+[centos@Controller ~(keystone)]$ ansible-playbook -i openstack_inventory.py /playbook/script.yml
+
+PLAY [Shell Script] **************************************************************************************************************************************************************************
+
+TASK [Gathering Facts] ***********************************************************************************************************************************************************************
+ok: [dacede2e-800c-4cef-a137-3e898d35d334]
+ok: [aaadf2b0-53af-4202-8aa6-4d341c4a2a2e]
+ok: [09a963af-0c16-4849-b0ab-ba1e74cd65e9]
+
+TASK [Set timezone to Asia/Seoul] ************************************************************************************************************************************************************
+changed: [aaadf2b0-53af-4202-8aa6-4d341c4a2a2e]
+changed: [dacede2e-800c-4cef-a137-3e898d35d334]
+changed: [09a963af-0c16-4849-b0ab-ba1e74cd65e9]
+
+TASK [Transfer the script] *******************************************************************************************************************************************************************
+changed: [aaadf2b0-53af-4202-8aa6-4d341c4a2a2e]
+changed: [dacede2e-800c-4cef-a137-3e898d35d334]
+changed: [09a963af-0c16-4849-b0ab-ba1e74cd65e9]
+
+TASK [Execute the script] ********************************************************************************************************************************************************************
+changed: [dacede2e-800c-4cef-a137-3e898d35d334]
+changed: [aaadf2b0-53af-4202-8aa6-4d341c4a2a2e]
+changed: [09a963af-0c16-4849-b0ab-ba1e74cd65e9]
+
+TASK [Get Logs] ******************************************************************************************************************************************************************************
+changed: [dacede2e-800c-4cef-a137-3e898d35d334]
+changed: [09a963af-0c16-4849-b0ab-ba1e74cd65e9]
+changed: [aaadf2b0-53af-4202-8aa6-4d341c4a2a2e]
+
+TASK [Delete Logs] ***************************************************************************************************************************************************************************
+[WARNING]: Consider using the file module with state=absent rather than running 'rm'.  If you need to use command because file is insufficient you can add 'warn: false' to this command task
+or set 'command_warnings=False' in ansible.cfg to get rid of this message.
+changed: [dacede2e-800c-4cef-a137-3e898d35d334]
+changed: [aaadf2b0-53af-4202-8aa6-4d341c4a2a2e]
+changed: [09a963af-0c16-4849-b0ab-ba1e74cd65e9]
+
+PLAY RECAP ***********************************************************************************************************************************************************************************
+09a963af-0c16-4849-b0ab-ba1e74cd65e9 : ok=6    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+aaadf2b0-53af-4202-8aa6-4d341c4a2a2e : ok=6    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+dacede2e-800c-4cef-a137-3e898d35d334 : ok=6    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+
+
+# 컨트롤 노드에서 수집해온 로그 확인
+
+[root@Controller playbook(keystone)]# ls -l /pull
+합계 60
+-rw-r--r-- 1 centos centos 13629  7월  2 20:17 Result_Collect_{10.10.1.145}_Server_202007022017.txt
+-rw-r--r-- 1 centos centos 13629  7월  2 20:17 Result_Collect_{10.10.1.178}_Server_202007022017.txt
+-rw-r--r-- 1 centos centos 13629  7월  2 20:17 Result_Collect_{10.10.1.54}_Server_202007022017.txt
+-rw-r--r-- 1 centos centos  1090  7월  2 20:17 Result_Value_{10.10.1.145}_Server_202007022017.txt
+-rw-r--r-- 1 centos centos  1090  7월  2 20:17 Result_Value_{10.10.1.178}_Server_202007022017.txt
+-rw-r--r-- 1 centos centos  1090  7월  2 20:17 Result_Value_{10.10.1.54}_Server_202007022017.txt

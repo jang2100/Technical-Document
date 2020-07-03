@@ -134,7 +134,7 @@ user_domain_name = default
 
 
 # ÅÛÇÃ¸´ »ý¼º
-[root@Controller ~(keystone)]# vi /etc/heat/templates/test.yml
+[root@Controller ~(keystone)]# vi /etc/heat/templates/Web.yml
 heat_template_version: 2015-10-15
 
 resources:
@@ -171,9 +171,7 @@ resources:
         sed -i "s/enforcing/disabled/g" /etc/selinux/config
         setenforce 0
         sudo git clone https://github.com/jang2100/LegacyWEB.git /var/www/html
-        mv /var/www/html/Secure_Check.txt /root/
         mv /var/www/html/images/logo.PNG /var/www/html/images/logo.png
-        sudo chmod 700 /root/Secure_Check.txt
         sed -i 144s/Indexes// /etc/httpd/conf/httpd.conf
         sed -i 144s/FollowSymLinks// /etc/httpd/conf/httpd.conf
 

@@ -1,6 +1,6 @@
 ng_check=`locale -a 2>/dev/null | grep "en_US" | egrep -i "(utf8|utf-8)"`
 if [ "$lang_check" = "" ]; then
-	lang_check="C"
+        lang_check="C"
 fi
 
 LANG="$lang_check"
@@ -9,22 +9,23 @@ LANGUAGE="$lang_check"
 export LANG
 export LC_ALL
 export LANGUAGE
+Hname="`hostname -I | awk '{print $1}'`"
 
 ##### 포트 명령어 설정
 if [ "`command -v netstat 2>/dev/null`" != "" ] || [ "`which netstat 2>/dev/null`" != "" ]; then
-	port_cmd="netstat"
+        port_cmd="netstat"
 else
-	port_cmd="ss"
+        port_cmd="ss"
 fi
 
 if [ "`command -v systemctl 2>/dev/null`" != "" ] || [ "`which systemctl 2>/dev/null`" != "" ]; then
-	systemctl_cmd="systemctl"
+        systemctl_cmd="systemctl"
 fi
 
 
 ##### 수집 파일 지정
-RESULT_COLLECT_FILE="Result_Collect_`date +\"%Y%m%d%H%M\"`.txt"
-RESULT_VALUE_FILE="Result_Value_`date +\"%Y%m%d%H%M\"`.txt"
+RESULT_COLLECT_FILE="Result_Collect_{$Hname}_Server_`date +\"%Y%m%d%H%M\"`.txt"
+RESULT_VALUE_FILE="Result_Value_{$Hname}_Server_`date +\"%Y%m%d%H%M\"`.txt"
 ##### 시스템 기본 정보 수집
 echo "[Start Script]"
 echo "====================== Linux Security Check Script Start ======================" >> $RESULT_COLLECT_FILE 2>&1
