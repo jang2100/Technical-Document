@@ -4,8 +4,9 @@ Controller node에서 진행
 yum -y install ansible
 
 #inventory 다운로드
-wget https://raw.githubusercontent.com/ansible/ansible/stable-2.9/contrib/inventory/openstack_inventory.py
-
+[root@Controller (keystone)]# wget https://raw.githubusercontent.com/ansible/ansible/stable-2.9/contrib/inventory/openstack_inventory.py
+[root@Controller (keystone)]# chmod +x openstack_inventory.py
+[root@Controller (keystone)]# cp openstack_inventory.py /etc/ansible/hosts
 
 #Log 수집 디렉토리 생성 및 권한부여
 [root@Controller (keystone)]# mkdir /getlogs
@@ -30,7 +31,7 @@ wget https://raw.githubusercontent.com/ansible/ansible/stable-2.9/contrib/invent
        command: sh /home/centos/Security.sh
 
      - name: Get Logs
-       synchronize:  src=/home/centos/*.txt dest=/pull mode=pull
+       synchronize:  src=/home/centos/*.txt dest=/getlogs mode=pull
 
      - name : Delete Logs
        shell: rm -rf /home/centos/*.txt
@@ -40,7 +41,7 @@ wget https://raw.githubusercontent.com/ansible/ansible/stable-2.9/contrib/invent
 
 #centos 계정으로 접속후 진행
 
-[centos@Controller ~(keystone)]$ ansible-playbook -i openstack_inventory.py /playbook/script.yml
+[centos@Controller ~(keystone)]$ ansible-playbook /playbook/script.yml
 
 PLAY [Shell Script] **************************************************************************************************************************************************************************
 
@@ -85,7 +86,7 @@ dacede2e-800c-4cef-a137-3e898d35d334 : ok=6    changed=5    unreachable=0    fai
 
 # 컨트롤 노드에서 수집해온 로그 확인
 
-[root@Controller playbook(keystone)]# ls -l /pull
+[root@Controller playbook(keystone)]# ls -l /getlogs
 합계 60
 -rw-r--r-- 1 centos centos 13629  7월  2 20:17 Result_Collect_{10.10.1.145}_Server_202007022017.txt
 -rw-r--r-- 1 centos centos 13629  7월  2 20:17 Result_Collect_{10.10.1.178}_Server_202007022017.txt
